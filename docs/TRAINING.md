@@ -15,6 +15,13 @@ Config: `configs/train_gpu.json`.
 
 Output: `outputs/gai1_train_gpu/last.pt`.
 
+`checkpoints/` is not the active training output directory. It is only a small
+public placeholder. Inspect local weights with:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\list_artifacts.py
+```
+
 ## 2. Chat SFT
 
 ```powershell

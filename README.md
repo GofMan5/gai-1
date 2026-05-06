@@ -61,6 +61,12 @@ Train the base checkpoint:
 .\.venv\Scripts\python.exe .\scripts\train_pretrain.py
 ```
 
+Local weights are saved under `outputs/`, not `checkpoints/`:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\list_artifacts.py
+```
+
 Make it follow chat instructions with LoRA SFT:
 
 ```powershell
@@ -211,6 +217,9 @@ Do not commit:
 - reports with private prompts or system details.
 
 The `.gitignore` is configured for this. Publish trained weights only as deliberate release artifacts with a model card, dataset summary, eval results, and hashes.
+
+`checkpoints/` is a small public placeholder. Actual local training outputs are
+kept in `outputs/` so generated weights stay out of git by default.
 
 ## Data And License Notes
 

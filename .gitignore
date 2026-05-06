@@ -11,10 +11,13 @@ htmlcov/
 dist/
 build/
 *.egg-info/
+configs/autotune/
+configs/train_gpu_autotuned.json
 
 outputs/
 checkpoints/*
 !checkpoints/.gitkeep
+!checkpoints/README.md
 reports/*
 !reports/.gitkeep
 wandb/
