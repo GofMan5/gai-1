@@ -177,11 +177,15 @@ extends the load-time context window with RoPE scaling. See
 ## Local API
 
 ```powershell
-.\.venv\Scripts\python.exe .\scripts\serve.py --checkpoint .\outputs\gai1_train_gpu\last.pt
+.\.venv\Scripts\python.exe .\scripts\serve.py --checkpoint .\outputs\gai1_train_gpu\last.pt --adapter .\outputs\gai1_sft_lora\adapter.pt
 ```
 
 - Health: `http://127.0.0.1:8000/health`
 - Chat: `POST http://127.0.0.1:8000/v1/chat/completions`
+
+The API returns assistant-only text, OpenAI-style `choices` and `usage`, supports
+`stop`, `top_k`, `top_p`, `repetition_penalty`, and rejects `stream=true` until
+streaming is implemented.
 
 ## Quantization
 

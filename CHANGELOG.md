@@ -45,3 +45,6 @@ Initial public scaffold:
 - Release gates now fail closed instead of silently falling back to train data;
   split manifests include sha256 provenance and non-empty train/validation
   checks.
+- Inference hardening: transformer KV-cache decode path, shared suffix-only
+  generation helper with stop tokens/strings and usage stats, cleaner chat CLI,
+  and OpenAI-style local API responses with adapter/device/context load args.

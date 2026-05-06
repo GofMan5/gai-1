@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from typing import Any
 
 import torch
 import torch.nn.functional as F
@@ -87,12 +88,13 @@ class CausalSelfAttention(nn.Module):
         self._rope_cos: torch.Tensor | None = None
         self._rope_sin: torch.Tensor | None = None
 
-    def _rope(self, x: torch.Tensor) -> torch.Tensor:
+    def _rope(self, x: torch.Tensor, position_offset: int = 0, total_seq_len: int | None = None) -> torch.Tensor:
         _batch, _heads, seq_len, head_dim = x.shape
-        key = (seq_len, x.device, x.dtype, self.rope_scaling, self.rope_scaling_factor, self.rope_original_context)
+        cache_len = total_seq_len or (position_offset + seq_len)
+        key = (cache_len, x.device, x.dtype, self.rope_scaling, self.rope_scaling_factor, self.rope_original_context)
         if self._rope_cache_key != key or self._rope_cos is None or self._rope_sin is None:
             self._rope_cos, self._rope_sin = build_rope_cache(
-                seq_len,
+                cache_len,
                 head_dim,
                 self.rope_base,
                 x.device,
@@ -102,10 +104,19 @@ class CausalSelfAttention(nn.Module):
                 self.rope_original_context,
             )
             self._rope_cache_key = key
-        return (x * self._rope_cos) + (rotate_half(x) * self._rope_sin)
+        cos = self._rope_cos[:, :, position_offset : position_offset + seq_len, :]
+        sin = self._rope_sin[:, :, position_offset : position_offset + seq_len, :]
+        return (x * cos) + (rotate_half(x) * sin)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        past_key_value: tuple[torch.Tensor, torch.Tensor] | None = None,
+        use_cache: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         batch, seq_len, channels = x.shape
+        past_len = 0 if past_key_value is None else int(past_key_value[0].size(2))
+        total_seq_len = past_len + seq_len
         if self.use_fused_qkv:
             qkv = self.qkv(x)
             q, k, v = qkv.chunk(3, dim=-1)
@@ -116,8 +127,13 @@ class CausalSelfAttention(nn.Module):
         q = q.view(batch, seq_len, self.n_head, self.head_dim).transpose(1, 2)
         k = k.view(batch, seq_len, self.n_kv_head, self.head_dim).transpose(1, 2)
         v = v.view(batch, seq_len, self.n_kv_head, self.head_dim).transpose(1, 2)
-        q = self._rope(q)
-        k = self._rope(k)
+        q = self._rope(q, position_offset=past_len, total_seq_len=total_seq_len)
+        k = self._rope(k, position_offset=past_len, total_seq_len=total_seq_len)
+        if past_key_value is not None:
+            past_k, past_v = past_key_value
+            k = torch.cat((past_k, k), dim=2)
+            v = torch.cat((past_v, v), dim=2)
+        new_key_value = (k, v)
         if self.n_kv_head != self.n_head:
             repeat = self.n_head // self.n_kv_head
             k = k.repeat_interleave(repeat, dim=1)
@@ -128,10 +144,13 @@ class CausalSelfAttention(nn.Module):
             v,
             attn_mask=None,
             dropout_p=self.dropout if self.training else 0.0,
-            is_causal=True,
+            is_causal=past_len == 0,
         )
         y = y.transpose(1, 2).contiguous().view(batch, seq_len, channels)
-        return self.proj(y)
+        y = self.proj(y)
+        if use_cache:
+            return y, new_key_value
+        return y
 
 
 class SwiGLU(nn.Module):
@@ -189,14 +208,29 @@ class Block(nn.Module):
         self.ffn = SimpleMoE(cfg) if cfg.use_moe else SwiGLU(cfg)
         self.use_moe = cfg.use_moe
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        x = x + self.attn(self.norm_1(x))
+    def forward(
+        self,
+        x: torch.Tensor,
+        past_key_value: tuple[torch.Tensor, torch.Tensor] | None = None,
+        use_cache: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor, torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+        if use_cache:
+            attn_out, new_key_value = self.attn(self.norm_1(x), past_key_value=past_key_value, use_cache=True)
+        else:
+            attn_out = self.attn(self.norm_1(x))
+            new_key_value = None
+        x = x + attn_out
         if self.use_moe:
             y, aux_loss = self.ffn(self.norm_2(x))
         else:
             y = self.ffn(self.norm_2(x))
             aux_loss = x.new_tensor(0.0)
-        return x + y, aux_loss
+        x = x + y
+        if use_cache:
+            if new_key_value is None:
+                raise RuntimeError("Attention cache was not produced")
+            return x, aux_loss, new_key_value
+        return x, aux_loss
 
 
 class GAIModel(nn.Module):
@@ -227,14 +261,27 @@ class GAIModel(nn.Module):
         self,
         idx: torch.Tensor,
         targets: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor | None, dict[str, torch.Tensor]]:
-        if idx.size(1) > self.cfg.block_size:
-            raise ValueError(f"Sequence length {idx.size(1)} exceeds block_size={self.cfg.block_size}")
+        past_key_values: tuple[tuple[torch.Tensor, torch.Tensor], ...] | None = None,
+        use_cache: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor | None, dict[str, Any]]:
+        past_len = 0 if past_key_values is None else int(past_key_values[0][0].size(2))
+        total_len = past_len + idx.size(1)
+        if total_len > self.cfg.block_size:
+            raise ValueError(f"Sequence length {total_len} exceeds block_size={self.cfg.block_size}")
+        if targets is not None and past_key_values is not None:
+            raise ValueError("targets cannot be used together with past_key_values")
         x = self.drop(self.token_embedding(idx))
         moe_aux = x.new_tensor(0.0)
-        for block in self.blocks:
+        next_key_values: list[tuple[torch.Tensor, torch.Tensor]] = []
+        if past_key_values is not None and len(past_key_values) != len(self.blocks):
+            raise ValueError("past_key_values length must match number of blocks")
+        for block_index, block in enumerate(self.blocks):
             if self.gradient_checkpointing and self.training:
                 x, aux = checkpoint(block, x, use_reentrant=False)
+            elif use_cache:
+                past = None if past_key_values is None else past_key_values[block_index]
+                x, aux, new_key_value = block(x, past_key_value=past, use_cache=True)
+                next_key_values.append(new_key_value)
             else:
                 x, aux = block(x)
             moe_aux = moe_aux + aux
@@ -243,7 +290,10 @@ class GAIModel(nn.Module):
         if targets is not None:
             ce_loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), targets.reshape(-1), ignore_index=-100)
             loss = ce_loss + (self.cfg.moe_aux_loss_weight * moe_aux)
-        return logits, loss, {"moe_aux_loss": moe_aux}
+        info: dict[str, Any] = {"moe_aux_loss": moe_aux}
+        if use_cache:
+            info["past_key_values"] = tuple(next_key_values)
+        return logits, loss, info
 
     @torch.no_grad()
     def generate(
@@ -252,17 +302,55 @@ class GAIModel(nn.Module):
         max_new_tokens: int,
         temperature: float = 0.8,
         top_k: int | None = 50,
+        top_p: float | None = None,
+        repetition_penalty: float = 1.0,
+        stop_token_ids: set[int] | None = None,
+        use_cache: bool = True,
     ) -> torch.Tensor:
-        for _ in range(max_new_tokens):
+        if max_new_tokens <= 0:
+            return idx
+        stop_token_ids = stop_token_ids or set()
+        past_key_values = None
+        if use_cache:
             context = idx[:, -self.cfg.block_size :]
-            logits, _loss, _info = self(context)
+            logits, _loss, info = self(context, use_cache=True)
+            past_key_values = info["past_key_values"]
+        for step in range(max_new_tokens):
+            if not use_cache:
+                context = idx[:, -self.cfg.block_size :]
+                logits, _loss, _info = self(context)
             logits = logits[:, -1, :] / max(temperature, 1e-6)
+            if repetition_penalty != 1.0:
+                penalty = max(1e-6, float(repetition_penalty))
+                for batch_index in range(idx.size(0)):
+                    seen = torch.unique(idx[batch_index])
+                    token_logits = logits[batch_index, seen]
+                    logits[batch_index, seen] = torch.where(token_logits < 0, token_logits * penalty, token_logits / penalty)
             if top_k is not None:
                 values, _indices = torch.topk(logits, min(top_k, logits.size(-1)))
                 logits[logits < values[:, [-1]]] = -float("inf")
+            if top_p is not None and 0.0 < top_p < 1.0:
+                sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+                sorted_probs = F.softmax(sorted_logits, dim=-1)
+                cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+                sorted_remove = cumulative_probs > top_p
+                sorted_remove[..., 1:] = sorted_remove[..., :-1].clone()
+                sorted_remove[..., 0] = False
+                remove = torch.zeros_like(logits, dtype=torch.bool).scatter(1, sorted_indices, sorted_remove)
+                logits = logits.masked_fill(remove, -float("inf"))
             probs = F.softmax(logits, dim=-1)
             next_token = torch.multinomial(probs, num_samples=1)
             idx = torch.cat((idx, next_token), dim=1)
+            if int(next_token[0, 0]) in stop_token_ids:
+                break
+            if use_cache and step + 1 < max_new_tokens:
+                cached_len = int(past_key_values[0][0].size(2)) if past_key_values is not None else self.cfg.block_size
+                if cached_len >= self.cfg.block_size:
+                    context = idx[:, -self.cfg.block_size :]
+                    logits, _loss, info = self(context, use_cache=True)
+                else:
+                    logits, _loss, info = self(next_token, past_key_values=past_key_values, use_cache=True)
+                past_key_values = info["past_key_values"]
         return idx
 
     def parameter_count(self) -> int:
