@@ -15,6 +15,18 @@ Config: `configs/train_gpu.json`.
 
 Output: `outputs/gai1_train_gpu/last.pt`.
 
+The trainer also writes:
+
+- `outputs/gai1_train_gpu/best.pt` - best checkpoint by validation loss when
+  `data.val_path` is configured, otherwise by observed train loss.
+- `outputs/gai1_train_gpu/training_state.pt` - optimizer, scaler, RNG state,
+  best metric, and resume step for reliable continuation.
+- `outputs/gai1_train_gpu/eval_log.jsonl` - validation loss/perplexity when a
+  held-out `data.val_path` is configured.
+
+Checkpoints include tokenizer metadata and dataset hashes so an incompatible
+tokenizer/data swap is visible instead of silently producing garbage.
+
 `checkpoints/` is not the active training output directory. It is only a small
 public placeholder. Inspect local weights with:
 
@@ -157,10 +169,13 @@ step and launches `train_pretrain.py` with the next target step.
 - CUDA with fp16 AMP.
 - TF32 enabled for matmul where supported.
 - Fused AdamW when the installed PyTorch build supports it.
+- Cosine learning-rate schedule with warmup and minimum LR.
 - Micro-batch `2`, gradient accumulation `16`.
 - Effective batch `32`.
 - Tokenizer: `data/tokenizer/gai1_tokenizer.json`.
 - `train_log.jsonl` records tokens/sec, data wait time, VRAM, loss, and tokens seen.
+- `training_state.pt` records optimizer/scaler/RNG state even when public
+  checkpoints keep optimizer payloads out of `last.pt`.
 
 Autotune micro-batch on your exact machine:
 

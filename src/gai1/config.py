@@ -28,6 +28,7 @@ class ModelConfig:
 @dataclass
 class DataConfig:
     train_path: str = "data/raw/sample_ru_chat.jsonl"
+    val_path: str = ""
     field: str = "text"
     block_size: int = 256
     streaming: bool = False
@@ -47,10 +48,15 @@ class TrainConfig:
     batch_size: int = 8
     gradient_accumulation_steps: int = 1
     learning_rate: float = 3e-4
+    lr_scheduler: str = "cosine"
+    warmup_steps: int = 100
+    min_learning_rate: float = 1e-5
     weight_decay: float = 0.1
     max_steps: int = 500
     grad_clip: float = 1.0
     log_every: int = 10
+    eval_every: int = 100
+    eval_batches: int = 16
     save_every: int = 100
     output_dir: str = "outputs/gai1_tiny"
     resume: bool = True

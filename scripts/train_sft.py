@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import hashlib
 import inspect
 import json
+import math
 import random
 import sys
 import time
@@ -73,6 +74,12 @@ def append_jsonl(path: Path, row: dict[str, Any]) -> None:
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+def atomic_torch_save(payload: dict[str, Any], path: Path) -> None:
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    torch.save(payload, tmp_path)
+    tmp_path.replace(path)
+
+
 def make_optimizer(parameters, cfg: Any, device: str) -> torch.optim.Optimizer:
     kwargs: dict[str, Any] = {
         "lr": cfg.train.learning_rate,
@@ -85,6 +92,70 @@ def make_optimizer(parameters, cfg: Any, device: str) -> torch.optim.Optimizer:
         except (TypeError, ValueError):
             pass
     return torch.optim.AdamW(parameters, **kwargs)
+
+
+def learning_rate_at_step(cfg: Any, step: int, max_steps: int | None = None) -> float:
+    scheduler = str(getattr(cfg.train, "lr_scheduler", "cosine")).lower()
+    base_lr = float(cfg.train.learning_rate)
+    min_lr = float(getattr(cfg.train, "min_learning_rate", 0.0))
+    warmup_steps = max(0, int(getattr(cfg.train, "warmup_steps", 0)))
+    total_steps = max(1, int(max_steps if max_steps is not None else cfg.train.max_steps))
+    if scheduler not in {"constant", "cosine"}:
+        raise ValueError("train.lr_scheduler must be 'constant' or 'cosine'")
+    if warmup_steps > 0 and step < warmup_steps:
+        return base_lr * float(step + 1) / float(warmup_steps)
+    if scheduler == "constant":
+        return base_lr
+    decay_steps = max(1, total_steps - warmup_steps)
+    progress = min(1.0, max(0.0, float(step - warmup_steps) / float(decay_steps)))
+    cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+    return min_lr + (base_lr - min_lr) * cosine
+
+
+def set_optimizer_lr(optimizer: torch.optim.Optimizer, lr: float) -> float:
+    for group in optimizer.param_groups:
+        group["lr"] = lr
+    return lr
+
+
+def load_training_state(path: Path, optimizer: torch.optim.Optimizer, scaler: Any, device: str) -> tuple[int, float]:
+    if not path.exists():
+        return 0, float("inf")
+    state = torch.load(path, map_location=device)
+    if state.get("format") != "gai1_sft_training_state_v1":
+        return 0, float("inf")
+    if "optimizer_state" in state:
+        try:
+            optimizer.load_state_dict(state["optimizer_state"])
+        except ValueError as exc:
+            print(f"SFT optimizer resume skipped: {exc}")
+    if "scaler_state" in state:
+        scaler.load_state_dict(state["scaler_state"])
+    if "torch_rng_state" in state:
+        torch.set_rng_state(state["torch_rng_state"].cpu())
+    if device == "cuda" and "cuda_rng_state_all" in state:
+        torch.cuda.set_rng_state_all(state["cuda_rng_state_all"])
+    return int(state.get("step", 0)), float(state.get("best_loss", float("inf")))
+
+
+def save_training_state(
+    path: Path,
+    optimizer: torch.optim.Optimizer,
+    scaler: Any,
+    step: int,
+    best_loss: float,
+) -> None:
+    payload: dict[str, Any] = {
+        "format": "gai1_sft_training_state_v1",
+        "step": step,
+        "best_loss": best_loss,
+        "optimizer_state": optimizer.state_dict(),
+        "scaler_state": scaler.state_dict(),
+        "torch_rng_state": torch.get_rng_state(),
+    }
+    if torch.cuda.is_available():
+        payload["cuda_rng_state_all"] = torch.cuda.get_rng_state_all()
+    atomic_torch_save(payload, path)
 
 
 def load_tokenizer(cfg: Any):
@@ -169,6 +240,15 @@ def main() -> int:
     trainable_params = [p for p in model.parameters() if p.requires_grad]
     optimizer = make_optimizer(trainable_params, cfg, device)
     scaler = torch.amp.GradScaler("cuda", enabled=device == "cuda")
+    out_dir = ROOT / args.out
+    out_dir.mkdir(parents=True, exist_ok=True)
+    state_path = out_dir / "training_state.pt"
+    previous_step = 0
+    best_loss = float("inf")
+    if resume_adapter is not None:
+        previous_step, best_loss = load_training_state(state_path, optimizer, scaler, device)
+    total_target_step = previous_step + int(args.max_steps)
+    current_lr = set_optimizer_lr(optimizer, learning_rate_at_step(cfg, previous_step, total_target_step))
 
     tokenizer = load_tokenizer(cfg)
     dataset = SFTDataset(
@@ -178,14 +258,12 @@ def main() -> int:
     )
     loader = DataLoader(dataset, batch_size=cfg.train.batch_size, shuffle=True, drop_last=True, pin_memory=device == "cuda", num_workers=cfg.train.num_workers)
     accumulation = max(1, cfg.train.gradient_accumulation_steps)
-    out_dir = ROOT / args.out
-    out_dir.mkdir(parents=True, exist_ok=True)
     dataset_records = jsonl_record_count(data_path)
     base_sha256 = file_sha256(checkpoint_path)
     dataset_sha256 = file_sha256(data_path)
     run_started_at = utc_now()
     log_path = out_dir / "train_log.jsonl"
-    if log_path.exists():
+    if log_path.exists() and resume_adapter is None:
         log_path.unlink()
     (out_dir / "manifest.json").write_text(
         json.dumps(
@@ -200,9 +278,14 @@ def main() -> int:
                 "lora": args.lora,
                 "lora_rank": args.lora_rank,
                 "max_steps": args.max_steps,
+                "previous_step": previous_step,
+                "target_step": total_target_step,
                 "context_length": cfg.model.block_size,
                 "started_at": run_started_at,
                 "fused_optimizer": any(group.get("fused", False) for group in optimizer.param_groups),
+                "lr_scheduler": cfg.train.lr_scheduler,
+                "warmup_steps": cfg.train.warmup_steps,
+                "min_learning_rate": cfg.train.min_learning_rate,
                 "resume_adapter": str(resume_adapter) if resume_adapter is not None else None,
                 "lora_targets": replaced,
                 "trainable_params": trainable_parameter_count(model),
@@ -243,6 +326,8 @@ def main() -> int:
             scaler.update()
             optimizer.zero_grad(set_to_none=True)
             step += 1
+            global_step = previous_step + step
+            current_lr = set_optimizer_lr(optimizer, learning_rate_at_step(cfg, global_step, total_target_step))
             last_loss = float(loss.detach())
             window_tokens += int(cfg.train.batch_size) * int(cfg.data.block_size) * accumulation
             progress.update(1)
@@ -254,11 +339,12 @@ def main() -> int:
                 append_jsonl(
                     log_path,
                     {
-                        "step": step,
+                        "step": global_step,
+                        "run_step": step,
                         "loss": last_loss,
-                        "lr": cfg.train.learning_rate,
-                        "examples_seen": step * cfg.train.batch_size * accumulation,
-                        "tokens_seen": step * cfg.train.batch_size * accumulation * cfg.data.block_size,
+                        "lr": current_lr,
+                        "examples_seen": global_step * cfg.train.batch_size * accumulation,
+                        "tokens_seen": global_step * cfg.train.batch_size * accumulation * cfg.data.block_size,
                         "tokens_per_s": tokens_per_s,
                         "data_wait_s": window_data_wait_s,
                         "window_s": elapsed,
@@ -268,15 +354,64 @@ def main() -> int:
                 window_start = now
                 window_tokens = 0
                 window_data_wait_s = 0.0
+            if step % int(cfg.train.save_every) == 0:
+                if last_loss is not None and last_loss < best_loss:
+                    best_loss = last_loss
+                    if args.lora:
+                        atomic_torch_save(
+                            {
+                                "format": "gai1_lora_adapter_v1",
+                                "state": lora_state_dict(model),
+                                "rank": args.lora_rank,
+                                "alpha": 16.0,
+                                "dropout": 0.05,
+                                "step": global_step,
+                                "metadata": {
+                                    "step": global_step,
+                                    "best_loss": best_loss,
+                                    "base_checkpoint": args.checkpoint,
+                                    "data": str(data_path.relative_to(ROOT)) if data_path.is_relative_to(ROOT) else str(data_path),
+                                },
+                            },
+                            out_dir / "best_adapter.pt",
+                        )
+                save_training_state(state_path, optimizer, scaler, global_step, best_loss)
             if step >= args.max_steps:
                 break
             last_fetch_end = time.perf_counter()
     progress.close()
 
+    final_step = previous_step + step
+    if last_loss is not None and last_loss < best_loss:
+        best_loss = last_loss
+        if args.lora:
+            atomic_torch_save(
+                {
+                    "format": "gai1_lora_adapter_v1",
+                    "state": lora_state_dict(model),
+                    "rank": args.lora_rank,
+                    "alpha": 16.0,
+                    "dropout": 0.05,
+                    "step": final_step,
+                    "metadata": {
+                        "step": final_step,
+                        "best_loss": best_loss,
+                        "base_checkpoint": args.checkpoint,
+                        "data": str(data_path.relative_to(ROOT)) if data_path.is_relative_to(ROOT) else str(data_path),
+                    },
+                },
+                out_dir / "best_adapter.pt",
+            )
+    save_training_state(state_path, optimizer, scaler, final_step, best_loss)
+
     final_metadata = {
-        "step": step,
+        "step": final_step,
+        "run_steps": step,
+        "previous_step": previous_step,
         "max_steps": args.max_steps,
+        "target_step": total_target_step,
         "final_loss": last_loss,
+        "best_loss": best_loss,
         "created_at": utc_now(),
         "started_at": run_started_at,
         "config_path": args.config,
@@ -287,6 +422,9 @@ def main() -> int:
         "data_records": dataset_records,
         "context_length": cfg.model.block_size,
         "fused_optimizer": any(group.get("fused", False) for group in optimizer.param_groups),
+        "lr_scheduler": cfg.train.lr_scheduler,
+        "warmup_steps": cfg.train.warmup_steps,
+        "min_learning_rate": cfg.train.min_learning_rate,
         "trainable_params": trainable_parameter_count(model),
         "resume_adapter": str(resume_adapter) if resume_adapter is not None else None,
         "train_log": str(log_path.relative_to(ROOT)) if log_path.is_relative_to(ROOT) else str(log_path),
@@ -308,24 +446,24 @@ def main() -> int:
         encoding="utf-8",
     )
     if args.lora:
-        torch.save(
+        atomic_torch_save(
             {
                 "format": "gai1_lora_adapter_v1",
                 "state": lora_state_dict(model),
                 "rank": args.lora_rank,
                 "alpha": 16.0,
                 "dropout": 0.05,
-                "step": step,
+                "step": final_step,
                 "metadata": final_metadata,
             },
             out_dir / "adapter.pt",
         )
         print(f"Saved LoRA adapter: {out_dir / 'adapter.pt'}")
     else:
-        torch.save(
+        atomic_torch_save(
             {
                 "format": "gai1_checkpoint_v1",
-                "step": step,
+                "step": final_step,
                 "model_config": model.config_dict(),
                 "model_state": model.state_dict(),
                 "metadata": {

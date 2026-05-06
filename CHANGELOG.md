@@ -36,3 +36,6 @@ Initial public scaffold:
   generation eval gates for mojibake, Cyrillic ratio, repetition, and prompt echo.
 - RTX 3060 training optimization: fused AdamW support, JSONL throughput logs,
   dataloader wait metrics, VRAM tracking, and micro-batch autotune helper.
+- Training-core hardening: cosine LR warmup/decay, reliable optimizer/scaler/RNG
+  resume state, best checkpoint/adapters, tokenizer and dataset provenance in
+  checkpoints, and optional validation loss/perplexity logging.
