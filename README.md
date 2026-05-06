@@ -110,6 +110,9 @@ Inside the TUI:
 /effort medium
 /effort high
 /effort max
+/reasoning full
+/reasoning compact
+/reasoning off
 /stats
 /config
 /examples

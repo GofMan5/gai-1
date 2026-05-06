@@ -38,8 +38,10 @@ COMMANDS: dict[str, str] = {
     "/examples": "show useful prompts",
     "/level": "set reasoning level: /level low|medium|high|max",
     "/effort": "alias for /level",
+    "/reasoning": "set reasoning view: /reasoning compact|full|off",
 }
 LEVELS = ("low", "medium", "high", "max")
+REASONING_VIEWS = ("compact", "full", "off")
 T = TypeVar("T")
 
 
@@ -72,6 +74,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rope-scaling", default=None, choices=("none", "linear", "dynamic_ntk"))
     parser.add_argument("--reasoning-profiles", default="configs/reasoning_modes.json")
     parser.add_argument("--level", default="medium")
+    parser.add_argument("--reasoning-view", default="full", choices=REASONING_VIEWS)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--dtype", default="auto", choices=("auto", "fp32", "fp16", "bf16"))
     parser.add_argument("--max-new-tokens", type=int, default=120)
@@ -98,6 +101,30 @@ def format_history(history: list[tuple[str, str]], user_text: str, max_turns: in
     parts.append(f"{USER_LABEL}: {user_text}")
     parts.append(f"{ASSISTANT_LABEL}:")
     return "\n".join(parts)
+
+
+def format_reasoning_context(trace: ReasoningTrace) -> str:
+    profile = trace.profile
+    lines = [
+        "Internal reasoning controller:",
+        f"- effort: {trace.level}",
+        f"- drafts: {profile.get('draft_count', '?')}",
+        f"- critic passes: {profile.get('critic_passes', '?')}",
+        f"- verifier passes: {profile.get('verifier_passes', '?')}",
+        "- plan:",
+    ]
+    lines.extend(f"  {index}. {item}" for index, item in enumerate(trace.plan, start=1))
+    if trace.critiques:
+        issues = [issue for batch in trace.critiques for issue in batch]
+        if issues:
+            lines.append("- known weak spots to avoid:")
+            lines.extend(f"  - {issue}" for issue in issues[:4])
+    lines.append("Use this controller privately. Answer only as GAI-1, without dumping hidden chain-of-thought.")
+    return "\n".join(lines)
+
+
+def format_model_prompt(history: list[tuple[str, str]], user_text: str, max_turns: int, trace: ReasoningTrace) -> str:
+    return format_reasoning_context(trace) + "\n\n" + format_history(history, user_text, max_turns)
 
 
 def trim_answer(text: str) -> str:
@@ -196,9 +223,16 @@ def make_stats_panel(stats: TurnStats, metadata: dict[str, object], level: str) 
     return Panel(table, title="Runtime", border_style="green", box=box.ROUNDED)
 
 
-def make_reasoning_panel(trace: ReasoningTrace | None) -> Panel:
+def make_reasoning_panel(trace: ReasoningTrace | None, view: str = "full") -> Panel:
+    if view == "off":
+        return Panel("Hidden. Enable with /reasoning compact or /reasoning full.", title="Reasoning", border_style="dim")
+
     if trace is None:
-        return Panel("Reasoning trace appears after the next prompt.", title="Reasoning", border_style="yellow")
+        return Panel(
+            "Runtime trace appears after the next prompt.\nThis is the external reasoning scaffold, not neural hidden state.",
+            title="Reasoning",
+            border_style="yellow",
+        )
 
     profile = trace.profile
     profile_table = Table.grid(padding=(0, 1))
@@ -209,11 +243,29 @@ def make_reasoning_panel(trace: ReasoningTrace | None) -> Panel:
     profile_table.add_row("critic", str(profile.get("critic_passes", "?")))
     profile_table.add_row("verifier", str(profile.get("verifier_passes", "?")))
     profile_table.add_row("rollbacks", str(trace.rollbacks))
+    profile_table.add_row("source", "runtime scaffold")
 
     plan_text = Text()
     for index, item in enumerate(trace.plan, start=1):
         plan_text.append(f"{index}. ", style="bold yellow")
         plan_text.append(item + "\n")
+
+    drafts_text = Text()
+    for index, draft in enumerate(trace.drafts[:3], start=1):
+        drafts_text.append(f"Draft {index}\n", style="bold magenta")
+        drafts_text.append(draft.strip() + "\n")
+
+    critique_text = Text()
+    has_critiques = False
+    for index, batch in enumerate(trace.critiques[:3], start=1):
+        if not batch:
+            continue
+        has_critiques = True
+        critique_text.append(f"Pass {index}\n", style="bold red")
+        for issue in batch[:4]:
+            critique_text.append(f"- {issue}\n", style="red")
+    if not has_critiques:
+        critique_text.append("no issues", style="green")
 
     verifier = Text()
     if trace.verifier_results:
@@ -224,10 +276,27 @@ def make_reasoning_panel(trace: ReasoningTrace | None) -> Panel:
         verifier.append("skipped", style="dim")
 
     grid = Table.grid(expand=True)
+    if view == "compact":
+        grid.add_column(ratio=1)
+        grid.add_column(ratio=2)
+        grid.add_row(profile_table, Panel(plan_text, title="Plan", border_style="yellow", box=box.ROUNDED))
+        grid.add_row(Panel(verifier, title="Verifier", border_style="yellow", box=box.ROUNDED))
+        return Panel(grid, title="Reasoning Trace", border_style="yellow", box=box.ROUNDED)
+
     grid.add_column(ratio=1)
-    grid.add_column(ratio=2)
-    grid.add_row(profile_table, Panel(plan_text, title="Plan", border_style="yellow", box=box.ROUNDED))
-    grid.add_row(Panel(verifier, title="Verifier", border_style="yellow", box=box.ROUNDED))
+    grid.add_column(ratio=1)
+    grid.add_row(
+        Panel(profile_table, title="Profile", border_style="yellow", box=box.ROUNDED),
+        Panel(plan_text, title="Plan", border_style="yellow", box=box.ROUNDED),
+    )
+    grid.add_row(
+        Panel(drafts_text, title="Drafts", border_style="magenta", box=box.ROUNDED),
+        Panel(critique_text, title="Critic", border_style="red", box=box.ROUNDED),
+    )
+    grid.add_row(
+        Panel(verifier, title="Verifier", border_style="yellow", box=box.ROUNDED),
+        Panel(trace.final.strip() or "empty", title="Reasoning Output", border_style="green", box=box.ROUNDED),
+    )
     return Panel(grid, title="Reasoning Trace", border_style="yellow", box=box.ROUNDED)
 
 
@@ -253,7 +322,7 @@ def make_chat_panel(history: list[tuple[str, str]], partial: str = "") -> Panel:
 def make_hint_panel() -> Panel:
     hint = Text()
     hint.append("Commands: ", style="bold cyan")
-    hint.append("/help  /effort high  /stats  /config  /clear  /quit", style="white")
+    hint.append("/help  /effort high  /reasoning full  /stats  /config  /clear  /quit", style="white")
     hint.append("\nTip: type '/' or an incomplete command to get suggestions.", style="dim")
     return Panel(hint, border_style="cyan", box=box.ROUNDED)
 
@@ -264,15 +333,25 @@ def render_screen(
     stats: TurnStats,
     metadata: dict[str, object],
     level: str,
+    reasoning_view: str,
+    width: int,
     partial: str = "",
 ) -> Table:
     outer = Table.grid(expand=True)
-    outer.add_column(ratio=3)
-    outer.add_column(ratio=2)
-    right = Table.grid(expand=True)
-    right.add_row(make_stats_panel(stats, metadata, level))
-    right.add_row(make_reasoning_panel(trace))
-    outer.add_row(make_chat_panel(history, partial), right)
+    if width < 120 or reasoning_view == "full":
+        top = Table.grid(expand=True)
+        top.add_column(ratio=3)
+        top.add_column(ratio=1)
+        top.add_row(make_chat_panel(history, partial), make_stats_panel(stats, metadata, level))
+        outer.add_row(top)
+        outer.add_row(make_reasoning_panel(trace, reasoning_view))
+    else:
+        outer.add_column(ratio=3)
+        outer.add_column(ratio=2)
+        right = Table.grid(expand=True)
+        right.add_row(make_stats_panel(stats, metadata, level))
+        right.add_row(make_reasoning_panel(trace, reasoning_view))
+        outer.add_row(make_chat_panel(history, partial), right)
     outer.add_row(make_hint_panel())
     return outer
 
@@ -298,6 +377,7 @@ def generate_with_live(
     trace: ReasoningTrace,
     metadata: dict[str, object],
     level: str,
+    reasoning_view: str,
     max_new_tokens: int,
     temperature: float,
     top_k: int,
@@ -317,7 +397,7 @@ def generate_with_live(
     generated: list[int] = []
 
     with Live(
-        render_screen(history, trace, stats, metadata, level),
+        render_screen(history, trace, stats, metadata, level, reasoning_view, console.width),
         console=console,
         refresh_per_second=6,
         transient=True,
@@ -345,7 +425,7 @@ def generate_with_live(
             stats.max_context_tokens = model.cfg.block_size  # type: ignore[attr-defined]
             stats.vram_allocated_gb, stats.vram_reserved_gb = memory_stats(device)
             partial = trim_answer(tokenizer.decode(generated))  # type: ignore[attr-defined]
-            live.update(render_screen(history, trace, stats, metadata, level, partial=partial))
+            live.update(render_screen(history, trace, stats, metadata, level, reasoning_view, console.width, partial=partial))
 
             if token_id in {getattr(tokenizer, "eos_id", -1), getattr(tokenizer, "eot_id", -2)}:
                 break
@@ -378,6 +458,7 @@ def print_examples(console: Console) -> None:
         "Составь план улучшения качества модели.",
         "Проверь этот аргумент на слабые места: ...",
         "/effort high",
+        "/reasoning full",
         "/stats",
     ]
     console.print(Panel("\n".join(examples), title="Examples", border_style="cyan"))
@@ -415,46 +496,57 @@ def handle_command(
     metadata: dict[str, object],
     last_stats: TurnStats,
     level: str,
+    reasoning_view: str,
     args: argparse.Namespace,
-) -> tuple[bool, bool, str]:
+) -> tuple[bool, bool, str, str]:
     command = user_text.casefold().strip()
     if command in {"/quit", "/exit"}:
-        return True, True, level
+        return True, True, level, reasoning_view
     if command == "/" or (command.startswith("/") and command.split()[0] not in COMMANDS):
         console.print(Panel(command_suggestion(command), title="Command hint", border_style="cyan"))
-        return True, False, level
+        return True, False, level, reasoning_view
     if command == "/help":
         print_help(console)
-        return True, False, level
+        return True, False, level, reasoning_view
     if command == "/examples":
         print_examples(console)
-        return True, False, level
+        return True, False, level, reasoning_view
     if command == "/clear":
         history.clear()
         console.clear()
         console.print("[green]History cleared.[/green]")
-        return True, False, level
+        return True, False, level, reasoning_view
     if command == "/stats":
         console.print(make_stats_panel(last_stats, metadata, level))
-        return True, False, level
+        return True, False, level, reasoning_view
     if command == "/config":
         print_config(console, metadata, args)
-        return True, False, level
+        return True, False, level, reasoning_view
     if command == "/history":
         console.print(make_chat_panel(history))
-        return True, False, level
+        return True, False, level, reasoning_view
     if command.startswith("/level") or command.startswith("/effort"):
         parts = user_text.split()
         if len(parts) == 1:
             console.print(Panel("Choose one: " + "  ".join(LEVELS), title="Reasoning effort", border_style="cyan"))
-            return True, False, level
+            return True, False, level, reasoning_view
         if len(parts) != 2 or parts[1] not in LEVELS:
             console.print(Panel("Usage: /effort low|medium|high|max", title="Command hint", border_style="red"))
-            return True, False, level
+            return True, False, level, reasoning_view
         reasoning.set_level(parts[1])
         console.print(f"[green]Reasoning effort set to {parts[1]}[/green]")
-        return True, False, parts[1]
-    return False, False, level
+        return True, False, parts[1], reasoning_view
+    if command.startswith("/reasoning"):
+        parts = user_text.split()
+        if len(parts) == 1:
+            console.print(Panel("Choose one: " + "  ".join(REASONING_VIEWS), title="Reasoning view", border_style="cyan"))
+            return True, False, level, reasoning_view
+        if len(parts) != 2 or parts[1] not in REASONING_VIEWS:
+            console.print(Panel("Usage: /reasoning compact|full|off", title="Command hint", border_style="red"))
+            return True, False, level, reasoning_view
+        console.print(f"[green]Reasoning view set to {parts[1]}[/green]")
+        return True, False, level, parts[1]
+    return False, False, level, reasoning_view
 
 
 def main() -> int:
@@ -518,19 +610,20 @@ def main() -> int:
 
     reasoning = GAIReasoningRuntime(level=args.level, profiles=profiles)
     level = args.level
+    reasoning_view = args.reasoning_view
     history: list[tuple[str, str]] = []
     last_stats = TurnStats(max_context_tokens=int(metadata.get("context_length") or 0))
     trace: ReasoningTrace | None = None
 
     console.clear()
-    console.print(render_screen(history, trace, last_stats, metadata, level))
+    console.print(render_screen(history, trace, last_stats, metadata, level, reasoning_view, console.width))
     while True:
         user_text = Prompt.ask("[bold cyan]You[/bold cyan] [dim](type /help)[/dim]").strip()
         if not user_text:
             continue
         if user_text.startswith("/"):
-            handled, should_exit, level = handle_command(
-                user_text, console, reasoning, history, metadata, last_stats, level, args
+            handled, should_exit, level, reasoning_view = handle_command(
+                user_text, console, reasoning, history, metadata, last_stats, level, reasoning_view, args
             )
             if should_exit:
                 break
@@ -538,7 +631,7 @@ def main() -> int:
                 continue
 
         trace = reasoning.run(user_text, level=level)
-        prompt = format_history(history, user_text, args.history_turns)
+        prompt = format_model_prompt(history, user_text, args.history_turns, trace)
         answer, last_stats = generate_with_live(
             model=model,
             tokenizer=tokenizer,
@@ -547,6 +640,7 @@ def main() -> int:
             trace=trace,
             metadata=metadata,
             level=level,
+            reasoning_view=reasoning_view,
             max_new_tokens=args.max_new_tokens,
             temperature=args.temperature,
             top_k=args.top_k,
@@ -555,7 +649,7 @@ def main() -> int:
         )
         history.append((user_text, answer))
         console.clear()
-        console.print(render_screen(history, trace, last_stats, metadata, level))
+        console.print(render_screen(history, trace, last_stats, metadata, level, reasoning_view, console.width))
 
     console.print("[green]Bye.[/green]")
     return 0

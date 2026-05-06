@@ -24,3 +24,5 @@ Initial public scaffold:
   reasoning panel, grouped runtime stats, and repetition penalty.
 - TUI startup loading screen with checkpoint, adapter, model, tokenizer,
   reasoning-profile, and warmup progress.
+- TUI full reasoning view with plan, drafts, critic, verifier, and prompt
+  injection so effort levels affect generation instead of only side-panel UI.
