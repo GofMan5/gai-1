@@ -187,6 +187,10 @@ The API returns assistant-only text, OpenAI-style `choices` and `usage`, support
 `stop`, `top_k`, `top_p`, `repetition_penalty`, and rejects `stream=true` until
 streaming is implemented.
 
+Runtime scripts check checkpoint tokenizer metadata against the tokenizer loaded
+from `--config` when metadata is available. `--allow-tokenizer-mismatch` exists
+for debugging only.
+
 ## Quantization
 
 ```powershell

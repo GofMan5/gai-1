@@ -26,6 +26,13 @@ The trainer also writes:
 
 Checkpoints include tokenizer metadata and dataset hashes so an incompatible
 tokenizer/data swap is visible instead of silently producing garbage.
+Runtime entrypoints (`chat.py`, `serve.py`, `tui.py`, `eval_gates.py`, and
+`train_sft.py`) verify tokenizer kind, actual vocab size, and tokenizer file
+sha256 when checkpoint metadata is available. Older checkpoints without
+tokenizer metadata load as `unknown` for compatibility. Use
+`--allow-tokenizer-mismatch` only for debugging, and `--strict-tokenizer-path`
+when release reproducibility requires the same tokenizer path as well as the
+same hash.
 
 When `model.use_moe=true`, train and eval logs also include routing-health
 metrics: router entropy/confidence, z-loss, load CV/min/max, dead experts, and

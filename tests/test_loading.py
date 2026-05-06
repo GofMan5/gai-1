@@ -75,3 +75,24 @@ def test_load_checkpoint_with_extended_context(tmp_path) -> None:
     assert metadata["source_context_length"] == 8
     assert metadata["context_length"] == 32
     assert metadata["rope_scaling"] == "linear"
+
+
+def test_load_checkpoint_exposes_tokenizer_metadata(tmp_path) -> None:
+    cfg = ModelConfig(block_size=8, n_layer=1, n_head=2, n_embd=32, use_moe=False)
+    model = GAIModel(cfg)
+    tokenizer_metadata = {"kind": "byte", "vocab_size": 260}
+    checkpoint = tmp_path / "model.pt"
+    torch.save(
+        {
+            "format": "gai1_checkpoint_v1",
+            "step": 0,
+            "model_config": model.config_dict(),
+            "model_state": model.state_dict(),
+            "tokenizer": tokenizer_metadata,
+        },
+        checkpoint,
+    )
+
+    _loaded, metadata = load_model(LoadOptions(checkpoint_path=checkpoint, device="cpu", dtype="fp32"))
+
+    assert metadata["tokenizer"] == tokenizer_metadata

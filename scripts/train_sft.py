@@ -24,7 +24,7 @@ from gai1.config import load_config
 from gai1.data import SFTDataset
 from gai1.loading import LoadOptions, load_model
 from gai1.lora import LoRAConfig, inject_lora, lora_state_dict, trainable_parameter_count
-from gai1.tokenizer import BPETokenizer, ByteTokenizer
+from gai1.tokenizer import BPETokenizer, ByteTokenizer, assert_tokenizer_compatible, tokenizer_spec_from_tokenizer
 from gai1.training import flatten_moe_metrics
 
 
@@ -47,6 +47,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resume-adapter", default=None)
     parser.add_argument("--context-length", type=int, default=None)
     parser.add_argument("--sft-stride", type=int, default=None)
+    parser.add_argument("--allow-tokenizer-mismatch", action="store_true")
+    parser.add_argument("--strict-tokenizer-path", action="store_true")
     return parser.parse_args()
 
 
@@ -257,6 +259,15 @@ def main() -> int:
     current_lr = set_optimizer_lr(optimizer, learning_rate_at_step(cfg, previous_step, total_target_step))
 
     tokenizer = load_tokenizer(cfg)
+    tokenizer_spec = tokenizer_spec_from_tokenizer(cfg, tokenizer, ROOT)
+    tokenizer_compatibility = assert_tokenizer_compatible(
+        metadata,
+        cfg,
+        ROOT,
+        tokenizer=tokenizer,
+        allow_mismatch=args.allow_tokenizer_mismatch,
+        strict_path=args.strict_tokenizer_path,
+    )
     dataset = SFTDataset(
         data_path,
         tokenizer=tokenizer,
@@ -287,6 +298,8 @@ def main() -> int:
                 "base": args.checkpoint,
                 "base_sha256": base_sha256,
                 "base_metadata": metadata,
+                "tokenizer": tokenizer_spec,
+                "tokenizer_compatibility": tokenizer_compatibility,
                 "data": str(data_path.relative_to(ROOT)) if data_path.is_relative_to(ROOT) else str(data_path),
                 "data_sha256": dataset_sha256,
                 "data_records": dataset_records,
@@ -392,6 +405,7 @@ def main() -> int:
                                     "step": global_step,
                                     "best_loss": best_loss,
                                     "base_checkpoint": args.checkpoint,
+                                    "base_tokenizer": tokenizer_spec,
                                     "data": str(data_path.relative_to(ROOT)) if data_path.is_relative_to(ROOT) else str(data_path),
                                 },
                             },
@@ -419,6 +433,7 @@ def main() -> int:
                         "step": final_step,
                         "best_loss": best_loss,
                         "base_checkpoint": args.checkpoint,
+                        "base_tokenizer": tokenizer_spec,
                         "data": str(data_path.relative_to(ROOT)) if data_path.is_relative_to(ROOT) else str(data_path),
                     },
                 },
@@ -439,6 +454,8 @@ def main() -> int:
         "config_path": args.config,
         "base_checkpoint": args.checkpoint,
         "base_sha256": base_sha256,
+        "tokenizer": tokenizer_spec,
+        "tokenizer_compatibility": tokenizer_compatibility,
         "data": str(data_path.relative_to(ROOT)) if data_path.is_relative_to(ROOT) else str(data_path),
         "data_sha256": dataset_sha256,
         "data_records": dataset_records,
@@ -462,6 +479,8 @@ def main() -> int:
                 "stage": "sft_lora" if args.lora else "sft_full",
                 "base": args.checkpoint,
                 "base_metadata": metadata,
+                "tokenizer": tokenizer_spec,
+                "tokenizer_compatibility": tokenizer_compatibility,
                 "lora": args.lora,
                 "lora_rank": args.lora_rank,
                 "lora_targets": replaced,
@@ -481,6 +500,7 @@ def main() -> int:
                 "alpha": 16.0,
                 "dropout": 0.05,
                 "step": final_step,
+                "tokenizer": tokenizer_spec,
                 "metadata": final_metadata,
             },
             out_dir / "adapter.pt",
@@ -493,6 +513,7 @@ def main() -> int:
                 "step": final_step,
                 "model_config": model.config_dict(),
                 "model_state": model.state_dict(),
+                "tokenizer": tokenizer_spec,
                 "metadata": {
                     **final_metadata,
                     "trained_context_length": model.cfg.block_size,

@@ -55,3 +55,6 @@ Initial public scaffold:
 - MoE telemetry hardening: router z-loss support, per-expert importance/load
   metrics, entropy/confidence/load-CV/dead-expert diagnostics, and pretrain/SFT
   JSONL logging for routing health.
+- Tokenizer compatibility hardening: runtime scripts verify checkpoint tokenizer
+  kind/vocab/hash against the actual loaded tokenizer, expose debug override
+  flags, and SFT artifacts now carry tokenizer compatibility metadata.

@@ -17,7 +17,7 @@ from gai1.config import load_config
 from gai1.data import PackedTextDataset, format_chat_prompt
 from gai1.loading import LoadOptions, load_model
 from gai1.reasoning import GAIReasoningRuntime
-from gai1.tokenizer import BPETokenizer, ByteTokenizer
+from gai1.tokenizer import BPETokenizer, ByteTokenizer, assert_tokenizer_compatible
 
 
 def configure_console() -> None:
@@ -35,6 +35,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--adapter", default=None)
     parser.add_argument("--data", default=None)
     parser.add_argument("--max-new-tokens", type=int, default=80)
+    parser.add_argument("--allow-tokenizer-mismatch", action="store_true")
+    parser.add_argument("--strict-tokenizer-path", action="store_true")
     return parser.parse_args()
 
 
@@ -115,6 +117,14 @@ def main() -> int:
         LoadOptions(checkpoint_path=ROOT / args.checkpoint, adapter_path=adapter_path, device=device, dtype="auto")
     )
     tokenizer = load_tokenizer(cfg)
+    assert_tokenizer_compatible(
+        metadata,
+        cfg,
+        ROOT,
+        tokenizer=tokenizer,
+        allow_mismatch=args.allow_tokenizer_mismatch,
+        strict_path=args.strict_tokenizer_path,
+    )
     dataset = PackedTextDataset(ROOT / eval_data, tokenizer, cfg.data.block_size, cfg.data.field)
     loader = DataLoader(dataset, batch_size=1, shuffle=False)
     losses: list[float] = []

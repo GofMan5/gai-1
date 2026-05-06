@@ -11,7 +11,7 @@ from gai1.config import load_config
 from gai1.data import format_chat_prompt
 from gai1.inference import GenerationConfig, generate_text
 from gai1.loading import LoadOptions, load_model
-from gai1.tokenizer import BPETokenizer, ByteTokenizer
+from gai1.tokenizer import BPETokenizer, ByteTokenizer, assert_tokenizer_compatible
 
 
 def configure_console() -> None:
@@ -38,14 +38,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--context-length", type=int, default=None)
     parser.add_argument("--rope-scaling", default=None, choices=("none", "linear", "dynamic_ntk"))
     parser.add_argument("--config", default="configs/train_gpu.json")
+    parser.add_argument("--allow-tokenizer-mismatch", action="store_true")
+    parser.add_argument("--strict-tokenizer-path", action="store_true")
     return parser.parse_args()
 
 
 def load_chat_tokenizer(config_path: str):
     cfg = load_config(ROOT / config_path)
     if cfg.tokenizer.kind == "byte":
-        return ByteTokenizer()
-    return BPETokenizer(ROOT / cfg.tokenizer.path)
+        return cfg, ByteTokenizer()
+    return cfg, BPETokenizer(ROOT / cfg.tokenizer.path)
 
 
 def main() -> int:
@@ -63,7 +65,17 @@ def main() -> int:
         )
     )
 
-    tokenizer = load_chat_tokenizer(args.config)
+    cfg, tokenizer = load_chat_tokenizer(args.config)
+    compatibility = assert_tokenizer_compatible(
+        metadata,
+        cfg,
+        ROOT,
+        tokenizer=tokenizer,
+        allow_mismatch=args.allow_tokenizer_mismatch,
+        strict_path=args.strict_tokenizer_path,
+    )
+    if compatibility["issues"]:
+        print(f"[warning] tokenizer mismatch ignored: {compatibility['issues']}", file=sys.stderr)
     result = generate_text(
         model,
         tokenizer,

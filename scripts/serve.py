@@ -16,7 +16,7 @@ from gai1.config import load_config
 from gai1.data import ASSISTANT_LABEL, USER_LABEL
 from gai1.inference import GenerationConfig, generate_text
 from gai1.loading import LoadOptions, load_model
-from gai1.tokenizer import BPETokenizer, ByteTokenizer
+from gai1.tokenizer import BPETokenizer, ByteTokenizer, assert_tokenizer_compatible
 
 
 def configure_console() -> None:
@@ -40,6 +40,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rope-scaling-factor", type=float, default=None)
     parser.add_argument("--rope-original-context", type=int, default=None)
     parser.add_argument("--max-request-bytes", type=int, default=65536)
+    parser.add_argument("--allow-tokenizer-mismatch", action="store_true")
+    parser.add_argument("--strict-tokenizer-path", action="store_true")
     return parser.parse_args()
 
 
@@ -92,6 +94,16 @@ class GAIService:
             self.tokenizer = ByteTokenizer()
         else:
             self.tokenizer = BPETokenizer(ROOT / self.cfg.tokenizer.path)
+        self.metadata["tokenizer_compatibility"] = assert_tokenizer_compatible(
+            self.metadata,
+            self.cfg,
+            ROOT,
+            tokenizer=self.tokenizer,
+            allow_mismatch=args.allow_tokenizer_mismatch,
+            strict_path=args.strict_tokenizer_path,
+        )
+        if self.metadata["tokenizer_compatibility"]["issues"]:
+            print(f"WARNING: tokenizer mismatch ignored: {self.metadata['tokenizer_compatibility']['issues']}", file=sys.stderr)
 
     def complete(self, payload: dict[str, Any]) -> dict[str, Any]:
         if payload.get("stream", False):

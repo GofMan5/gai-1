@@ -25,7 +25,7 @@ from gai1.config import load_config
 from gai1.data import ASSISTANT_LABEL, USER_LABEL
 from gai1.loading import LoadOptions, load_model
 from gai1.reasoning import GAIReasoningRuntime, ReasoningTrace, load_reasoning_profiles
-from gai1.tokenizer import BPETokenizer, ByteTokenizer
+from gai1.tokenizer import BPETokenizer, ByteTokenizer, assert_tokenizer_compatible
 
 COMMANDS: dict[str, str] = {
     "/help": "show commands",
@@ -84,6 +84,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-k", type=int, default=40)
     parser.add_argument("--repetition-penalty", type=float, default=1.08)
     parser.add_argument("--history-turns", type=int, default=6)
+    parser.add_argument("--allow-tokenizer-mismatch", action="store_true")
+    parser.add_argument("--strict-tokenizer-path", action="store_true")
     return parser.parse_args()
 
 
@@ -131,8 +133,8 @@ class LocalModelGenerator:
 def load_chat_tokenizer(config_path: str):
     cfg = load_config(ROOT / config_path)
     if cfg.tokenizer.kind == "byte":
-        return ByteTokenizer()
-    return BPETokenizer(ROOT / cfg.tokenizer.path)
+        return cfg, ByteTokenizer()
+    return cfg, BPETokenizer(ROOT / cfg.tokenizer.path)
 
 
 def format_history(history: list[tuple[str, str]], user_text: str, max_turns: int) -> str:
@@ -645,7 +647,15 @@ def main() -> int:
             )
         ),
     )
-    tokenizer = run_loading_step(console, steps, 3, steps[3][0], lambda: load_chat_tokenizer(args.config))
+    cfg, tokenizer = run_loading_step(console, steps, 3, steps[3][0], lambda: load_chat_tokenizer(args.config))
+    metadata["tokenizer_compatibility"] = assert_tokenizer_compatible(
+        metadata,
+        cfg,
+        ROOT,
+        tokenizer=tokenizer,
+        allow_mismatch=args.allow_tokenizer_mismatch,
+        strict_path=args.strict_tokenizer_path,
+    )
     profiles = run_loading_step(console, steps, 4, steps[4][0], lambda: load_reasoning_profiles(profiles_path))
 
     def warmup() -> None:
