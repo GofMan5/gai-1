@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 setlocal EnableExtensions
 
 cd /d "%~dp0"
@@ -33,6 +34,7 @@ if /I "%CMD%"=="artifacts" goto :list
 if /I "%CMD%"=="estimate" goto :estimate
 if /I "%CMD%"=="compare-quantized" goto :compare_quantized
 if /I "%CMD%"=="test" goto :test
+if /I "%CMD%"=="advanced" goto :tools_menu
 
 echo [GAI-1] Unknown command: %CMD%
 echo.
@@ -41,75 +43,204 @@ goto :help
 :menu
 cls
 echo ============================================================
-echo  GAI-1 unified launcher
+echo  GAI-1 - локальная русскоязычная модель
 echo ============================================================
 echo.
-echo  1. Chat TUI
-echo  2. Prepare RU data + tokenizer
-echo  3. Pretrain base model
-echo  4. Train chat LoRA
-echo  5. Train reasoning LoRA
-echo  6. 100-step training cycle
-echo  7. Full quality pipeline
-echo  8. Autotune RTX 3060 config
-echo  9. Serve local API
-echo 10. Eval gates
-echo 11. Quantize checkpoint
-echo 12. List artifacts
-echo 13. Doctor
-echo 14. Run tests
+echo Что хотите сделать?
+echo.
+echo  1. Поговорить с моделью
+echo     Открывает чат. LoRA-адаптеры подключатся автоматически, если они уже есть.
+echo.
+echo  2. Подготовить проект
+echo     Проверяет Python/CUDA/GPU, скачивает русские данные и обучает токенизатор.
+echo.
+echo  3. Обучать модель
+echo     База, chat LoRA, reasoning LoRA, короткие циклы и полный pipeline.
+echo.
+echo  4. Проверить качество и файлы
+echo     Eval gates, список чекпоинтов/адаптеров/отчетов, сравнение квантизации.
+echo.
+echo  5. Экспорт и запуск API
+echo     Квантование модели и локальный OpenAI-compatible API.
+echo.
+echo  6. Диагностика и инструменты
+echo     Doctor, автоподбор RTX 3060, тесты и полный список команд.
+echo.
 echo  0. Exit
 echo.
-set /p "MENU=Choose: "
+set /p "MENU=Выберите 1-6 или 0: "
 if "%MENU%"=="1" goto :chat
-if "%MENU%"=="2" goto :prepare
-if "%MENU%"=="3" goto :pretrain
-if "%MENU%"=="4" goto :chat_lora
-if "%MENU%"=="5" goto :reasoning_lora
-if "%MENU%"=="6" goto :cycle
-if "%MENU%"=="7" goto :quality
-if "%MENU%"=="8" goto :autotune
-if "%MENU%"=="9" goto :serve
-if "%MENU%"=="10" goto :eval
-if "%MENU%"=="11" goto :quantize
-if "%MENU%"=="12" goto :list
-if "%MENU%"=="13" goto :doctor
-if "%MENU%"=="14" goto :test
+if "%MENU%"=="2" goto :first_setup
+if "%MENU%"=="3" goto :train_menu
+if "%MENU%"=="4" goto :quality_menu
+if "%MENU%"=="5" goto :export_menu
+if "%MENU%"=="6" goto :tools_menu
 if "%MENU%"=="0" exit /b 0
-echo [GAI-1] Unknown menu item: %MENU%
+echo [GAI-1] Не понял пункт: %MENU%
 pause
 goto :menu
 
+:train_menu
+cls
+echo ============================================================
+echo  GAI-1 - обучение модели
+echo ============================================================
+echo.
+echo  1. Базовое обучение
+echo     Обучает основную модель с нуля или продолжает с последнего чекпоинта.
+echo.
+echo  2. Дообучить для чата
+echo     Обучает chat LoRA, чтобы модель лучше отвечала в диалоге.
+echo.
+echo  3. Дообучить reasoning
+echo     Создает reasoning SFT-данные и обучает reasoning LoRA.
+echo.
+echo  4. Короткий цикл на 100 шагов
+echo     Быстрая итерация обучения и пример ответа для контроля прогресса.
+echo.
+echo  5. Полный pipeline качества
+echo     Готовит данные, обучает модель/LoRA и запускает проверки.
+echo.
+echo  B. Назад
+echo  0. Exit
+echo.
+set /p "MENU=Выберите 1-5, B или 0: "
+if "%MENU%"=="1" goto :pretrain
+if "%MENU%"=="2" goto :chat_lora
+if "%MENU%"=="3" goto :reasoning_lora
+if "%MENU%"=="4" goto :cycle
+if "%MENU%"=="5" goto :quality
+if /I "%MENU%"=="B" goto :menu
+if "%MENU%"=="0" exit /b 0
+echo [GAI-1] Не понял пункт: %MENU%
+pause
+goto :train_menu
+
+:quality_menu
+cls
+echo ============================================================
+echo  GAI-1 - проверки и артефакты
+echo ============================================================
+echo.
+echo  1. Проверить качество
+echo     Запускает eval gates: loss, русский текст, повторы, prompt echo.
+echo.
+echo  2. Показать файлы модели
+echo     Показывает чекпоинты, LoRA-адаптеры, отчеты и экспортированные модели.
+echo.
+echo  3. Оценить оставшееся обучение
+echo     Примерно считает, сколько шагов еще нужно до связного общения.
+echo.
+echo  4. Сравнить квантованную модель
+echo     Сравнивает FP16 и INT4/INT8 чекпоинт на одинаковых промптах.
+echo.
+echo  B. Назад
+echo  0. Exit
+echo.
+set /p "MENU=Выберите 1-4, B или 0: "
+if "%MENU%"=="1" goto :eval
+if "%MENU%"=="2" goto :list
+if "%MENU%"=="3" goto :estimate
+if "%MENU%"=="4" goto :compare_quantized_menu
+if /I "%MENU%"=="B" goto :menu
+if "%MENU%"=="0" exit /b 0
+echo [GAI-1] Не понял пункт: %MENU%
+pause
+goto :quality_menu
+
+:export_menu
+cls
+echo ============================================================
+echo  GAI-1 - экспорт и запуск
+echo ============================================================
+echo.
+echo  1. Квантовать модель в INT8
+echo     Меньше размер, обычно меньше потерь качества.
+echo.
+echo  2. Квантовать модель в INT4
+echo     Еще меньше размер, но качество может просесть сильнее.
+echo.
+echo  3. Запустить локальный API
+echo     Поднимает OpenAI-compatible сервер на localhost.
+echo.
+echo  B. Назад
+echo  0. Exit
+echo.
+set /p "MENU=Выберите 1-3, B или 0: "
+if "%MENU%"=="1" goto :quantize_int8
+if "%MENU%"=="2" goto :quantize_int4
+if "%MENU%"=="3" goto :serve
+if /I "%MENU%"=="B" goto :menu
+if "%MENU%"=="0" exit /b 0
+echo [GAI-1] Не понял пункт: %MENU%
+pause
+goto :export_menu
+
+:tools_menu
+cls
+echo ============================================================
+echo  GAI-1 - диагностика и инструменты
+echo ============================================================
+echo.
+echo  1. Проверить окружение
+echo     Проверяет Python, PyTorch, CUDA и доступность GPU.
+echo.
+echo  2. Автоподбор RTX 3060
+echo     Подбирает более быстрые настройки обучения для локальной видеокарты.
+echo.
+echo  3. Запустить тесты
+echo     Запускает pytest для проверки проекта.
+echo.
+echo  4. Расширенные команды
+echo     Показывает полный список CLI-команд и алиасов.
+echo.
+echo  B. Назад
+echo  0. Exit
+echo.
+set /p "MENU=Выберите 1-4, B или 0: "
+if "%MENU%"=="1" goto :doctor
+if "%MENU%"=="2" goto :autotune
+if "%MENU%"=="3" goto :test
+if "%MENU%"=="4" goto :help
+if /I "%MENU%"=="B" goto :menu
+if "%MENU%"=="0" exit /b 0
+echo [GAI-1] Не понял пункт: %MENU%
+pause
+goto :tools_menu
+
 :help
-echo GAI-1 unified launcher
+echo GAI-1 - единый запускатель
 echo.
-echo Usage:
+echo Обычный запуск:
 echo   gai.bat
-echo   gai.bat setup
-echo   gai.bat prepare [fineweb_docs] [sft_records]
-echo   gai.bat pretrain [extra train_pretrain.py args]
-echo   gai.bat chat-lora [steps]
-echo   gai.bat reasoning-lora [steps] [visible^|controller] [low^|medium^|high^|max]
-echo   gai.bat cycle [sft^|pretrain] [steps]
-echo   gai.bat quality [extra train_until_quality.py args]
-echo   gai.bat autotune [extra autotune args]
-echo   gai.bat chat [extra tui.py args]
-echo   gai.bat serve [extra serve.py args]
-echo   gai.bat eval [extra eval_gates.py args]
-echo   gai.bat quantize [4^|8]
-echo   gai.bat list
-echo   gai.bat estimate [extra estimate args]
-echo   gai.bat compare-quantized outputs\quantized\last_int4.pt
-echo   gai.bat test
-echo   gai.bat doctor
 echo.
-echo Recommended first path:
+echo Основной путь с нуля:
 echo   gai.bat setup
+echo   gai.bat doctor
 echo   gai.bat prepare
 echo   gai.bat pretrain
 echo   gai.bat chat-lora 500
 echo   gai.bat reasoning-lora 1000 visible high
 echo   gai.bat chat
+echo.
+echo Частые команды:
+echo   gai.bat chat                  открыть чат
+echo   gai.bat prepare               скачать данные и обучить токенизатор
+echo   gai.bat pretrain              обучать базовую модель
+echo   gai.bat chat-lora 500         дообучить для чата
+echo   gai.bat reasoning-lora 1000   дообучить reasoning
+echo   gai.bat cycle sft 100         короткий цикл обучения
+echo   gai.bat eval                  проверить качество
+echo   gai.bat list                  показать артефакты
+echo   gai.bat quantize 8            экспорт INT8
+echo   gai.bat serve                 запустить локальный API
+echo   gai.bat doctor                проверить окружение
+echo.
+echo Все команды и алиасы:
+echo   setup, doctor, prepare, tokenizer, pretrain
+echo   chat-lora, reasoning-lora, cycle, quality, autotune
+echo   chat, tui, serve, eval, quantize, list, artifacts
+echo   estimate, compare-quantized, test, advanced, help
 exit /b 0
 
 :need_python
@@ -156,6 +287,26 @@ echo.
 echo [GAI-1] Setup finished.
 pause
 exit /b 0
+
+:first_setup
+if not exist "%PY%" (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\setup_rtx3060_windows.ps1"
+  if errorlevel 1 (
+    pause
+    exit /b 1
+  )
+)
+call :need_python
+if errorlevel 1 (
+  pause
+  exit /b 1
+)
+"%PY%" "scripts\check_accelerator.py"
+if errorlevel 1 (
+  pause
+  exit /b 1
+)
+goto :prepare
 
 :doctor
 call :need_python
@@ -412,6 +563,14 @@ if not "%~1"=="" set "BITS=%~1"
 call :run "%PY%" "scripts\export_quantized.py" --checkpoint "outputs\gai1_train_gpu\last.pt" --bits %BITS%
 exit /b %ERRORLEVEL%
 
+:quantize_int8
+call :quantize 8
+exit /b %ERRORLEVEL%
+
+:quantize_int4
+call :quantize 4
+exit /b %ERRORLEVEL%
+
 :list
 call :need_python
 if errorlevel 1 (
@@ -428,6 +587,13 @@ if errorlevel 1 (
   exit /b 1
 )
 call :run "%PY%" "scripts\estimate_training_steps.py" %*
+exit /b %ERRORLEVEL%
+
+:compare_quantized_menu
+set "QCKPT=outputs\quantized\last_int8.pt"
+set /p "QCKPT=Путь к INT4/INT8 чекпоинту [%QCKPT%]: "
+if "%QCKPT%"=="" set "QCKPT=outputs\quantized\last_int8.pt"
+call :compare_quantized "%QCKPT%"
 exit /b %ERRORLEVEL%
 
 :compare_quantized

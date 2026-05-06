@@ -69,3 +69,6 @@ Initial public scaffold:
 - Unified Windows launcher: `gai.bat` is now the single root batch entrypoint
   for setup, data/tokenizer prep, training, chat, serving, eval, quantization,
   artifacts, tests, and diagnostics.
+- Launcher UX cleanup: top-level `gai.bat` menu is now goal-based with Russian
+  explanations, technical commands moved into submenus, and the batch file uses
+  UTF-8 + CRLF for stable Windows `cmd.exe` labels.
