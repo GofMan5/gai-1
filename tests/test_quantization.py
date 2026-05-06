@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from pathlib import PureWindowsPath
 
+import pytest
 import torch
 
-from gai1.quantization import dequantize_state_dict, pack_int4, quantize_state_dict, unpack_int4
+from gai1.quantization import dequantize_state_dict, pack_int4, quantize_state_dict, unpack_int4, validate_quantized_records
+from scripts.export_quantized import default_generation_config
 
 
 def test_int4_pack_roundtrip() -> None:
@@ -60,8 +62,51 @@ def test_router_gate_kept_for_int4() -> None:
     assert stats.quantized_tensors == 1
 
 
+def test_router_gate_can_be_quantized_for_int4_override() -> None:
+    state = {
+        "blocks.0.ffn.gate.weight": torch.randn(4, 8),
+    }
+    records, stats = quantize_state_dict(state, bits=4, keep_router_fp16=False)
+    assert records["blocks.0.ffn.gate.weight"]["quantized"] is True
+    assert stats.quantized_tensors == 1
+
+
+def test_router_gate_quantized_for_int8() -> None:
+    state = {
+        "blocks.0.ffn.gate.weight": torch.randn(4, 8),
+    }
+    records, stats = quantize_state_dict(state, bits=8)
+    assert records["blocks.0.ffn.gate.weight"]["quantized"] is True
+    assert stats.quantized_tensors == 1
+
+
+def test_dequantize_alias_can_point_forward() -> None:
+    emb = torch.randn(16, 8)
+    records, _stats = quantize_state_dict({"token_embedding.weight": emb}, bits=4)
+    records = {"lm_head.weight": {"alias": "token_embedding.weight"}, **records}
+    restored = dequantize_state_dict(records, dtype=torch.float32)
+    assert restored["lm_head.weight"] is restored["token_embedding.weight"]
+
+
+def test_dequantize_rejects_missing_alias_target() -> None:
+    with pytest.raises(ValueError, match="Alias target not found"):
+        dequantize_state_dict({"lm_head.weight": {"alias": "token_embedding.weight"}}, dtype=torch.float32)
+
+
+def test_validate_quantized_records_rejects_bits_mismatch() -> None:
+    records, _stats = quantize_state_dict({"linear.weight": torch.randn(4, 4)}, bits=4)
+    with pytest.raises(ValueError, match="does not match checkpoint bits"):
+        validate_quantized_records(records, checkpoint_bits=8)
+
+
 def test_release_metadata_source_path_is_relative() -> None:
     metadata = {"source_checkpoint": "outputs/gai1_train_gpu/last.pt"}
     source = metadata["source_checkpoint"]
     assert not PureWindowsPath(source).is_absolute()
     assert not source.startswith("/")
+
+
+def test_default_generation_config_chat_template_is_utf8() -> None:
+    config = default_generation_config({})
+    assert config["chat_template"] == "Пользователь: {prompt}\nАссистент:"
+    assert "Ð" not in config["chat_template"]

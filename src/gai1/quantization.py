@@ -27,7 +27,7 @@ def tensor_nbytes(tensor: torch.Tensor) -> int:
 
 def is_router_tensor(name: str) -> bool:
     lowered = name.casefold()
-    return ".gate.weight" in lowered or "router" in lowered
+    return ".gate.weight" in lowered or "router" in lowered or "router_gate" in lowered
 
 
 def should_quantize_tensor(
@@ -113,6 +113,8 @@ def quantize_state_dict(
     keep_router_fp16: bool = True,
     tie_lm_head: bool = True,
 ) -> tuple[dict[str, Any], QuantizationStats]:
+    if bits not in {4, 8}:
+        raise ValueError("Only 4-bit and 8-bit quantization are supported")
     records: dict[str, Any] = {}
     original_bytes = 0
     quantized_bytes = 0
@@ -155,14 +157,62 @@ def quantize_state_dict(
     )
 
 
-def dequantize_state_dict(records: dict[str, Any], dtype: torch.dtype = torch.float16) -> dict[str, torch.Tensor]:
-    state: dict[str, torch.Tensor] = {}
+def validate_quantized_records(records: object, checkpoint_bits: int | None = None) -> dict[str, Any]:
+    if not isinstance(records, dict) or not records:
+        raise ValueError("Quantized checkpoint must contain a non-empty model_state_quantized dict")
+    if checkpoint_bits is not None and checkpoint_bits not in {4, 8}:
+        raise ValueError(f"Unsupported quantized checkpoint bits: {checkpoint_bits}")
     for name, record in records.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError("Quantized checkpoint contains an invalid tensor name")
+        if not isinstance(record, dict):
+            raise ValueError(f"Quantized tensor record must be a dict: {name}")
         if "alias" in record:
-            state[name] = state[record["alias"]]
+            alias = record["alias"]
+            if not isinstance(alias, str) or not alias:
+                raise ValueError(f"Invalid alias target for tensor: {name}")
+            if alias not in records:
+                raise ValueError(f"Alias target not found for tensor {name}: {alias}")
+            continue
+        if record.get("quantized"):
+            bits = int(record.get("bits", -1))
+            if bits not in {4, 8}:
+                raise ValueError(f"Unsupported quantization bits for tensor {name}: {bits}")
+            if checkpoint_bits is not None and bits != checkpoint_bits:
+                raise ValueError(f"Tensor {name} bits={bits} does not match checkpoint bits={checkpoint_bits}")
+            shape = record.get("shape")
+            if not isinstance(shape, (tuple, list)) or not shape or any(int(dim) <= 0 for dim in shape):
+                raise ValueError(f"Invalid quantized tensor shape for {name}: {shape!r}")
+            if not isinstance(record.get("scale"), torch.Tensor):
+                raise ValueError(f"Missing quantization scale tensor for {name}")
+            if not isinstance(record.get("payload"), torch.Tensor):
+                raise ValueError(f"Missing quantized payload tensor for {name}")
+        else:
+            if not isinstance(record.get("payload"), torch.Tensor):
+                raise ValueError(f"Missing kept payload tensor for {name}")
+    return records
+
+
+def dequantize_state_dict(records: dict[str, Any], dtype: torch.dtype = torch.float16) -> dict[str, torch.Tensor]:
+    records = validate_quantized_records(records)
+    state: dict[str, torch.Tensor] = {}
+
+    def materialize(name: str, stack: tuple[str, ...] = ()) -> torch.Tensor:
+        if name in state:
+            return state[name]
+        if name in stack:
+            cycle = " -> ".join((*stack, name))
+            raise ValueError(f"Quantized tensor alias cycle detected: {cycle}")
+        record = records[name]
+        if "alias" in record:
+            state[name] = materialize(record["alias"], (*stack, name))
         elif record.get("quantized"):
             state[name] = dequantize_tensor_symmetric(record, dtype=dtype)
         else:
             payload = record["payload"]
             state[name] = payload.to(dtype) if payload.is_floating_point() else payload
+        return state[name]
+
+    for name in records:
+        materialize(name)
     return state

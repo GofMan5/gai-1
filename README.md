@@ -199,7 +199,11 @@ for debugging only.
 ```
 
 INT4 export keeps MoE router/gate tensors in fp16 by default and stores tied
-`lm_head.weight` as an alias of `token_embedding.weight`.
+`lm_head.weight` as an alias of `token_embedding.weight`. Quantized v2
+artifacts are strict release files: they embed tokenizer metadata/payload,
+source hashes, generation defaults, and quantization policy; the loader rejects
+malformed records, unsupported bit widths, and v2 artifacts without tokenizer
+metadata.
 
 Compare FP16 vs quantized generations:
 

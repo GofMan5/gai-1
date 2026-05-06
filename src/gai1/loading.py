@@ -9,7 +9,7 @@ import torch
 from gai1.config import ModelConfig
 from gai1.lora import LoRAConfig, inject_lora
 from gai1.model import GAIModel
-from gai1.quantization import dequantize_state_dict
+from gai1.quantization import dequantize_state_dict, validate_quantized_records
 
 
 @dataclass(frozen=True)
@@ -50,6 +50,49 @@ def make_model_config(raw: dict[str, Any]) -> ModelConfig:
     return ModelConfig(**{key: value for key, value in raw.items() if key in allowed})
 
 
+def checkpoint_tokenizer_metadata(checkpoint: dict[str, Any]) -> dict[str, Any] | None:
+    top_level = checkpoint.get("tokenizer")
+    if isinstance(top_level, dict) and top_level:
+        return top_level
+    metadata = checkpoint.get("metadata", {})
+    if isinstance(metadata, dict):
+        nested = metadata.get("tokenizer") or metadata.get("source_tokenizer")
+        if isinstance(nested, dict) and nested:
+            return nested
+    return None
+
+
+def checkpoint_generation_config(checkpoint: dict[str, Any]) -> dict[str, Any] | None:
+    metadata = checkpoint.get("metadata", {})
+    if isinstance(metadata, dict):
+        value = metadata.get("generation_config")
+        if isinstance(value, dict):
+            return value
+    value = checkpoint.get("generation_config")
+    return value if isinstance(value, dict) else None
+
+
+def checkpoint_quantization_policy(checkpoint: dict[str, Any]) -> dict[str, Any] | None:
+    metadata = checkpoint.get("metadata", {})
+    if isinstance(metadata, dict):
+        value = metadata.get("quantization_policy")
+        if isinstance(value, dict):
+            return value
+    value = checkpoint.get("quantization_policy")
+    return value if isinstance(value, dict) else None
+
+
+def validate_quantized_checkpoint(checkpoint: dict[str, Any], fmt: str) -> None:
+    bits = checkpoint.get("bits")
+    if bits not in {4, 8}:
+        raise ValueError(f"Unsupported quantized checkpoint bits: {bits}")
+    if not isinstance(checkpoint.get("model_config"), dict):
+        raise ValueError("Quantized checkpoint is missing model_config")
+    validate_quantized_records(checkpoint.get("model_state_quantized"), checkpoint_bits=int(bits))
+    if fmt == "gai1_quantized_checkpoint_v2" and checkpoint_tokenizer_metadata(checkpoint) is None:
+        raise ValueError("Quantized checkpoint v2 must include tokenizer metadata")
+
+
 def load_model(options: LoadOptions) -> tuple[GAIModel, dict[str, Any]]:
     checkpoint_path = Path(options.checkpoint_path)
     device = resolve_device(options.device)
@@ -58,12 +101,15 @@ def load_model(options: LoadOptions) -> tuple[GAIModel, dict[str, Any]]:
     fmt = checkpoint.get("format")
 
     checkpoint_metadata = checkpoint.get("metadata", {})
+    if not isinstance(checkpoint_metadata, dict):
+        checkpoint_metadata = {}
 
     if fmt == "gai1_checkpoint_v1":
         cfg = make_model_config(checkpoint["model_config"])
         state = checkpoint["model_state"]
         quantization = "none"
     elif fmt in {"gai1_quantized_checkpoint_v1", "gai1_quantized_checkpoint_v2"}:
+        validate_quantized_checkpoint(checkpoint, fmt)
         cfg = make_model_config(checkpoint["model_config"])
         state = dequantize_state_dict(checkpoint["model_state_quantized"], dtype=dtype)
         quantization = f"int{checkpoint.get('bits')}"
@@ -121,7 +167,7 @@ def load_model(options: LoadOptions) -> tuple[GAIModel, dict[str, Any]]:
         "rope_scaling": cfg.rope_scaling,
         "rope_scaling_factor": cfg.rope_scaling_factor,
         "rope_original_context": cfg.rope_original_context,
-        "tokenizer": checkpoint.get("tokenizer"),
-        "generation_config": checkpoint_metadata.get("generation_config") if isinstance(checkpoint_metadata, dict) else None,
-        "quantization_policy": checkpoint_metadata.get("quantization_policy") if isinstance(checkpoint_metadata, dict) else None,
+        "tokenizer": checkpoint_tokenizer_metadata(checkpoint),
+        "generation_config": checkpoint_generation_config(checkpoint),
+        "quantization_policy": checkpoint_quantization_policy(checkpoint),
     }

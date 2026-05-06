@@ -58,3 +58,6 @@ Initial public scaffold:
 - Tokenizer compatibility hardening: runtime scripts verify checkpoint tokenizer
   kind/vocab/hash against the actual loaded tokenizer, expose debug override
   flags, and SFT artifacts now carry tokenizer compatibility metadata.
+- Quantized release hardening: export now fails closed on missing tokenizer
+  artifacts, fixes UTF-8 generation metadata, records explicit router dtype
+  policy, and validates quantized records/aliases before model load.
