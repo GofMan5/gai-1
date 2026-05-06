@@ -360,7 +360,7 @@ def make_chat_panel(history: list[tuple[str, str]], partial: str = "") -> Panel:
         text.append(user.strip() + "\n")
         text.append("GAI-1: ", style="bold magenta")
         text.append((assistant.strip() or "[empty]").strip() + "\n")
-        text.append("─" * 48 + "\n", style="dim")
+        text.append("-" * 48 + "\n", style="dim")
     if partial:
         text.append(f"Turn {len(history) + 1}\n", style="bold blue")
         text.append("GAI-1 streaming: ", style="bold magenta")

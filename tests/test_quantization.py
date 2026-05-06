@@ -109,4 +109,4 @@ def test_release_metadata_source_path_is_relative() -> None:
 def test_default_generation_config_chat_template_is_utf8() -> None:
     config = default_generation_config({})
     assert config["chat_template"] == "Пользователь: {prompt}\nАссистент:"
-    assert "Ð" not in config["chat_template"]
+    assert chr(0x00D0) not in config["chat_template"]

@@ -61,3 +61,5 @@ Initial public scaffold:
 - Quantized release hardening: export now fails closed on missing tokenizer
   artifacts, fixes UTF-8 generation metadata, records explicit router dtype
   policy, and validates quantized records/aliases before model load.
+- Runtime text integrity hardening: TUI separators are ASCII-stable and tests
+  now fail on common mojibake markers in source/config/eval text.
