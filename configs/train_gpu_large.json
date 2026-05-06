@@ -22,7 +22,9 @@
     "byte_fallback": true
   },
   "data": {
-    "train_path": "data/raw/fineweb2_ru_large.jsonl",
+    "train_path": "data/processed/fineweb2_ru_train.jsonl",
+    "val_path": "data/processed/fineweb2_ru_val.jsonl",
+    "split_manifest": "data/processed/pretrain_split_manifest.json",
     "field": "text",
     "block_size": 768,
     "streaming": true

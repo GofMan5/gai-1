@@ -32,6 +32,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-chat", action="store_true")
     parser.add_argument("--skip-reasoning", action="store_true")
     parser.add_argument("--skip-eval", action="store_true")
+    parser.add_argument("--allow-failed-eval", action="store_true")
     return parser.parse_args()
 
 
@@ -64,12 +65,20 @@ def write_large_config() -> str:
     source = ROOT / "configs" / "train_gpu.json"
     target = ROOT / "configs" / "train_gpu_large.json"
     payload = json.loads(source.read_text(encoding="utf-8"))
-    payload["data"]["train_path"] = "data/raw/fineweb2_ru_large.jsonl"
+    payload["data"]["train_path"] = "data/processed/fineweb2_ru_train.jsonl"
+    payload["data"]["val_path"] = "data/processed/fineweb2_ru_val.jsonl"
+    payload["data"]["split_manifest"] = "data/processed/pretrain_split_manifest.json"
     payload["data"]["streaming"] = True
     payload["train"]["resume"] = True
     payload["train"]["fused_optimizer"] = True
     target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return str(target.relative_to(ROOT))
+
+
+def eval_exit_code(returncode: int, allow_failed_eval: bool) -> int | None:
+    if returncode == 0 or allow_failed_eval:
+        return None
+    return returncode
 
 
 def main() -> int:
@@ -150,7 +159,7 @@ def main() -> int:
             "--adapter",
             "outputs/gai1_reasoning_lora/adapter.pt",
             "--data",
-            "data/raw/fineweb2_ru_large.jsonl",
+            "data/processed/fineweb2_ru_val.jsonl",
         ]
         result = run_capture(eval_cmd)
         print(result.stdout)
@@ -166,6 +175,9 @@ def main() -> int:
         )
         if result.returncode != 0:
             print("Eval gates did not pass yet. Keep training; artifacts were not promoted as release-ready.")
+            exit_code = eval_exit_code(result.returncode, args.allow_failed_eval)
+            if exit_code is not None:
+                return exit_code
 
     write_report({"event": "done", "created_at": datetime.now(timezone.utc).isoformat()})
     print("Training pipeline finished.")

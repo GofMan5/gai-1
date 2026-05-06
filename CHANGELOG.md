@@ -39,3 +39,9 @@ Initial public scaffold:
 - Training-core hardening: cosine LR warmup/decay, reliable optimizer/scaler/RNG
   resume state, best checkpoint/adapters, tokenizer and dataset provenance in
   checkpoints, and optional validation loss/perplexity logging.
+- Data/eval hardening: deterministic JSONL dedupe + train/validation split
+  manifest, large-config validation path, held-out eval-gate default, fixed RU
+  Cyrillic/mojibake heuristics, and repaired Russian seed/eval text.
+- Release gates now fail closed instead of silently falling back to train data;
+  split manifests include sha256 provenance and non-empty train/validation
+  checks.

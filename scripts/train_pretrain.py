@@ -258,6 +258,8 @@ def data_metadata(cfg: Any) -> dict[str, Any]:
         "train_sha256": file_sha256(train_path),
         "val_path": cfg.data.val_path,
         "val_sha256": file_sha256(val_path) if val_path is not None else None,
+        "split_manifest": cfg.data.split_manifest,
+        "split_manifest_sha256": file_sha256(ROOT / cfg.data.split_manifest) if cfg.data.split_manifest else None,
         "field": cfg.data.field,
         "streaming": bool(getattr(cfg.data, "streaming", False)),
     }

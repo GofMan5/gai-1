@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -25,6 +26,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--reasoning-level", default="high")
     parser.add_argument("--reasoning-style", choices=("visible", "controller"), default="visible")
     parser.add_argument("--pretrain-out", default="data/raw/fineweb2_ru_large.jsonl")
+    parser.add_argument("--pretrain-train-out", default="data/processed/fineweb2_ru_train.jsonl")
+    parser.add_argument("--pretrain-val-out", default="data/processed/fineweb2_ru_val.jsonl")
+    parser.add_argument("--pretrain-split-manifest", default="data/processed/pretrain_split_manifest.json")
+    parser.add_argument("--pretrain-val-fraction", type=float, default=0.02)
     parser.add_argument("--sft-out", default="data/raw/ru_turbo_alpaca_large.jsonl")
     parser.add_argument("--reasoning-out", default="data/sft/reasoning_ru.jsonl")
     return parser.parse_args()
@@ -46,6 +51,18 @@ def jsonl_count(path: Path) -> int:
     return count
 
 
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def read_json(path: Path) -> dict[str, object]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def write_manifest(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -55,6 +72,8 @@ def main() -> int:
     configure_console()
     args = parse_args()
     pretrain_path = ROOT / args.pretrain_out
+    pretrain_train_path = ROOT / args.pretrain_train_out
+    pretrain_val_path = ROOT / args.pretrain_val_out
     sft_path = ROOT / args.sft_out
     reasoning_path = ROOT / args.reasoning_out
 
@@ -71,6 +90,25 @@ def main() -> int:
         )
     else:
         print(f"skip pretrain download: {pretrain_path} already has {jsonl_count(pretrain_path)} records")
+
+    run(
+        [
+            sys.executable,
+            "scripts/split_jsonl_dataset.py",
+            "--input",
+            args.pretrain_out,
+            "--train-out",
+            args.pretrain_train_out,
+            "--val-out",
+            args.pretrain_val_out,
+            "--manifest",
+            args.pretrain_split_manifest,
+            "--val-fraction",
+            str(args.pretrain_val_fraction),
+            "--min-chars",
+            "300",
+        ]
+    )
 
     if jsonl_count(sft_path) < args.sft_records:
         run(
@@ -108,6 +146,13 @@ def main() -> int:
             "created_at": datetime.now(timezone.utc).isoformat(),
             "pretrain": str(pretrain_path.relative_to(ROOT)),
             "pretrain_records": jsonl_count(pretrain_path),
+            "pretrain_train": str(pretrain_train_path.relative_to(ROOT)),
+            "pretrain_train_records": jsonl_count(pretrain_train_path),
+            "pretrain_val": str(pretrain_val_path.relative_to(ROOT)),
+            "pretrain_val_records": jsonl_count(pretrain_val_path),
+            "pretrain_split_manifest": args.pretrain_split_manifest,
+            "pretrain_split_manifest_sha256": file_sha256(ROOT / args.pretrain_split_manifest),
+            "pretrain_split": read_json(ROOT / args.pretrain_split_manifest),
             "sft": str(sft_path.relative_to(ROOT)),
             "sft_records": jsonl_count(sft_path),
             "reasoning": str(reasoning_path.relative_to(ROOT)),

@@ -48,8 +48,8 @@ def make_record(rng: random.Random) -> dict[str, str]:
     prompt = f"{rng.choice(styles)}: как GAI-1 должен работать с темой '{topic}'?"
     response = (
         f"GAI-1 должен {behavior}. "
-        f"Рабочая схема: определить цель, собрать контекст, сделать черновик, проверить результат, "
-        f"записать trace для будущего дообучения."
+        "Рабочая схема: определить цель, собрать контекст, сделать черновик, проверить результат, "
+        "записать trace для будущего дообучения."
     )
     return {"prompt": prompt, "response": response, "topic": topic}
 

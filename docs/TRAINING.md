@@ -122,14 +122,25 @@ LoRA. A stronger local target:
 The pipeline writes:
 
 - `data/raw/fineweb2_ru_large.jsonl`
+- `data/processed/fineweb2_ru_train.jsonl`
+- `data/processed/fineweb2_ru_val.jsonl`
+- `data/processed/pretrain_split_manifest.json`
 - `data/raw/ru_turbo_alpaca_large.jsonl`
 - `data/sft/reasoning_ru.jsonl`
 - `reports/train_until_quality.jsonl`
 
 The generated large pretrain config enables streaming JSONL reads, so the web
-corpus is not loaded fully into RAM. Eval gates now check perplexity plus basic
-RU generation quality: minimum length, Cyrillic ratio, mojibake, repetition, and
-prompt echo.
+corpus is not loaded fully into RAM. Pretrain data is deterministically deduped
+and split into train/validation files; validation loss/perplexity is used for
+`best.pt` when the validation file exists. The split manifest is intentionally
+small and public-friendly: it records counts, source summary, algorithm version,
+and sha256 hashes for input/train/validation files.
+
+Eval gates now fail closed: they require `--data` or `data.val_path` and refuse
+to evaluate on `data.train_path`. They check held-out perplexity plus basic RU
+generation quality: minimum length, Cyrillic ratio, mojibake, repetition, and
+prompt echo. `train_until_quality.bat` returns a non-zero exit code when eval
+fails unless `--allow-failed-eval` is passed.
 
 This still will not make the model Claude-level. Claude-like reasoning requires
 massive pretraining, curated reasoning traces, preference tuning, verifier/eval

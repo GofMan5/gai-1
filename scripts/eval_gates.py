@@ -5,6 +5,7 @@ import json
 import math
 import sys
 from pathlib import Path
+from typing import Any
 
 import torch
 from torch.utils.data import DataLoader
@@ -37,7 +38,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_tokenizer(cfg):
+def load_tokenizer(cfg: Any):
     if cfg.tokenizer.kind == "byte":
         return ByteTokenizer()
     return BPETokenizer(ROOT / cfg.tokenizer.path)
@@ -47,7 +48,7 @@ def cyrillic_ratio(text: str) -> float:
     letters = [char for char in text if char.isalpha()]
     if not letters:
         return 0.0
-    cyr = sum(1 for char in letters if "а" <= char.casefold() <= "я" or char.casefold() == "ё")
+    cyr = sum(1 for char in letters if "\u0400" <= char <= "\u04ff")
     return cyr / len(letters)
 
 
@@ -68,7 +69,28 @@ def prompt_echo_ratio(prompt: str, output: str) -> float:
 
 
 def has_mojibake(text: str) -> bool:
-    return any(marker in text for marker in ("Ð", "Ñ", "Рџ", "�"))
+    markers = (chr(0x00C3), chr(0x00C2), chr(0x00D0), chr(0x00D1), "\ufffd")
+    return any(marker in text for marker in markers)
+
+
+def validate_gates(gates: dict[str, Any]) -> None:
+    prompts = gates.get("sample_prompts", [])
+    if not isinstance(prompts, list) or not prompts:
+        raise ValueError("Eval gates must define a non-empty sample_prompts list")
+    for prompt in prompts:
+        if has_mojibake(str(prompt)):
+            raise ValueError(f"Eval prompt contains mojibake: {prompt!r}")
+
+
+def resolve_eval_data(args: argparse.Namespace, cfg: Any) -> str:
+    eval_data = args.data or cfg.data.val_path
+    if not eval_data:
+        raise ValueError("Release eval requires --data or config data.val_path; refusing to fall back to train data")
+    normalized_eval = Path(eval_data).as_posix()
+    normalized_train = Path(cfg.data.train_path).as_posix()
+    if normalized_eval == normalized_train:
+        raise ValueError("Release eval data must be held out and cannot equal data.train_path")
+    return eval_data
 
 
 @torch.no_grad()
@@ -85,13 +107,15 @@ def main() -> int:
     args = parse_args()
     cfg = load_config(ROOT / args.config)
     gates = json.loads((ROOT / args.gates).read_text(encoding="utf-8"))
+    validate_gates(gates)
+    eval_data = resolve_eval_data(args, cfg)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     adapter_path = ROOT / args.adapter if args.adapter else None
     model, metadata = load_model(
         LoadOptions(checkpoint_path=ROOT / args.checkpoint, adapter_path=adapter_path, device=device, dtype="auto")
     )
     tokenizer = load_tokenizer(cfg)
-    dataset = PackedTextDataset(ROOT / (args.data or cfg.data.train_path), tokenizer, cfg.data.block_size, cfg.data.field)
+    dataset = PackedTextDataset(ROOT / eval_data, tokenizer, cfg.data.block_size, cfg.data.field)
     loader = DataLoader(dataset, batch_size=1, shuffle=False)
     losses: list[float] = []
     with torch.no_grad():
@@ -104,7 +128,7 @@ def main() -> int:
             if loss is not None:
                 losses.append(float(loss.detach().cpu()))
     ppl = math.exp(min(20.0, sum(losses) / max(1, len(losses))))
-    reasoning_ok = all(GAIReasoningRuntime(level=level).run("Проверка").final for level in gates["reasoning_levels"])
+    reasoning_ok = all(GAIReasoningRuntime(level=level).run("\u041f\u0440\u043e\u0432\u0435\u0440\u043a\u0430").final for level in gates["reasoning_levels"])
     generation_reports = []
     for prompt in gates.get("sample_prompts", []):
         output = generate_answer(model, tokenizer, str(prompt), args.max_new_tokens)
@@ -131,6 +155,8 @@ def main() -> int:
     report = {
         "passed": passed,
         "perplexity": ppl,
+        "eval_data": eval_data,
+        "eval_data_is_train": False,
         "metadata": metadata,
         "reasoning_ok": reasoning_ok,
         "generation_ok": generation_ok,

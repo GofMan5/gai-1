@@ -29,6 +29,7 @@ class ModelConfig:
 class DataConfig:
     train_path: str = "data/raw/sample_ru_chat.jsonl"
     val_path: str = ""
+    split_manifest: str = ""
     field: str = "text"
     block_size: int = 256
     streaming: bool = False
