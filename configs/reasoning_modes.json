@@ -1,0 +1,53 @@
+{
+  "default": "medium",
+  "levels": {
+    "low": {
+      "planning_depth": 1,
+      "draft_count": 1,
+      "critic_passes": 0,
+      "verifier_passes": 0,
+      "rollback_limit": 0,
+      "tool_budget": 0,
+      "private_token_budget": 256,
+      "self_consistency": false,
+      "temperature": 0.4,
+      "use_for": ["simple_chat", "fast_answer"]
+    },
+    "medium": {
+      "planning_depth": 2,
+      "draft_count": 1,
+      "critic_passes": 1,
+      "verifier_passes": 1,
+      "rollback_limit": 1,
+      "tool_budget": 2,
+      "private_token_budget": 768,
+      "self_consistency": false,
+      "temperature": 0.6,
+      "use_for": ["normal_chat", "small_coding_tasks", "explanations"]
+    },
+    "high": {
+      "planning_depth": 3,
+      "draft_count": 2,
+      "critic_passes": 2,
+      "verifier_passes": 2,
+      "rollback_limit": 2,
+      "tool_budget": 5,
+      "private_token_budget": 2048,
+      "self_consistency": true,
+      "temperature": 0.7,
+      "use_for": ["debugging", "architecture", "math", "multi_step_code"]
+    },
+    "max": {
+      "planning_depth": 4,
+      "draft_count": 3,
+      "critic_passes": 3,
+      "verifier_passes": 3,
+      "rollback_limit": 3,
+      "tool_budget": 8,
+      "private_token_budget": 4096,
+      "self_consistency": true,
+      "temperature": 0.8,
+      "use_for": ["hard_research", "security_review", "large_refactor", "high_risk_decisions"]
+    }
+  }
+}

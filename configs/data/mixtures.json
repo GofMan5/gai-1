@@ -1,0 +1,15 @@
+{
+  "pretrain_ru_first": {
+    "russian": 0.45,
+    "english": 0.25,
+    "code_math": 0.20,
+    "multilingual_other": 0.10
+  },
+  "sft_ru_chat": {
+    "russian_dialog": 0.60,
+    "tool_use": 0.15,
+    "code": 0.15,
+    "reasoning": 0.10
+  }
+}
+

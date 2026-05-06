@@ -1,0 +1,6 @@
+{
+  "max_perplexity": 500.0,
+  "min_generation_chars": 1,
+  "reasoning_levels": ["low", "medium", "high", "max"]
+}
+

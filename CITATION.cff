@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use GAI-1, cite the repository."
+title: "GAI-1: Russian-first trainable LLM scaffold"
+version: "0.1.0"
+date-released: "2026-05-06"
+license: "Apache-2.0"
+authors:
+  - name: "GAI-1 Contributors"
+repository-code: "https://github.com/GofMan5/gai-1"

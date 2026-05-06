@@ -1,0 +1,8 @@
+{
+  "name": "ru_corpus_seed",
+  "language": "ru",
+  "raw_paths": ["data/raw"],
+  "processed_path": "data/processed",
+  "filters": ["utf8_normalize", "language_id", "dedupe", "pii_secret_filter", "quality_score"]
+}
+

@@ -1,0 +1,59 @@
+{
+  "target": {
+    "name": "gai1_moe_5t",
+    "description": "Long-term sparse MoE target. This is a scale blueprint, not a local config.",
+    "total_parameters": "up_to_5T",
+    "active_parameters_per_token": "100B-300B",
+    "primary_language": "ru",
+    "secondary_languages": ["en"],
+    "capabilities": ["chat", "reasoning", "code", "tool_use", "agentic_verification"]
+  },
+  "architecture": {
+    "base": "decoder_only_transformer",
+    "attention": "GQA_or_MQA",
+    "position": "RoPE_with_long_context_training",
+    "mlp": "SwiGLU_MoE",
+    "norm": "RMSNorm",
+    "experts": "64-128",
+    "routing": "top_2_or_top_4",
+    "context_length_path": [8192, 32768, 131072],
+    "tokenizer_vocab_target": "128k-200k"
+  },
+  "training": {
+    "local_prototype": ["PyTorch"],
+    "mid_scale": ["PyTorch_FSDP", "DeepSpeed_Zero_3"],
+    "frontier_scale": ["Megatron_Core", "NVIDIA_NeMo", "expert_parallelism"],
+    "orchestration": ["Ray", "Slurm_or_Kubernetes"],
+    "precision": ["BF16", "FP8_when_stable"],
+    "parallelism": [
+      "data_parallel",
+      "tensor_parallel",
+      "pipeline_parallel",
+      "sequence_parallel",
+      "expert_parallel",
+      "optimizer_state_sharding"
+    ]
+  },
+  "post_training": {
+    "stages": [
+      "continued_pretrain_ru_code_math",
+      "sft_chat_ru",
+      "sft_tool_use",
+      "sft_reasoning",
+      "preference_training_dpo",
+      "rl_reasoning_with_verifier",
+      "safety_and_style_alignment"
+    ]
+  },
+  "eval_gates": [
+    "russian_chat_quality",
+    "instruction_following",
+    "code_patch_eval",
+    "math_reasoning",
+    "tool_use",
+    "hallucination_rate",
+    "safety_regression",
+    "latency_and_cost"
+  ]
+}
+

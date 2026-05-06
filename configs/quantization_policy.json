@@ -1,0 +1,18 @@
+{
+  "default_release_bits": 8,
+  "aggressive_release_bits": 4,
+  "keep_norm_and_bias_fp16": true,
+  "training_policy": {
+    "base_training": "fp16_amp_or_bf16_amp",
+    "fine_tuning": "full_fp16_for_core_model_or_future_qlora_for_adapters",
+    "release_storage": "export_int8_by_default",
+    "edge_storage": "export_int4_after_eval_gate"
+  },
+  "notes": [
+    "Quantization reduces storage and inference memory; it does not reduce parameter count.",
+    "Use fp16/bf16 for active training stability.",
+    "Use int8/int4 after training for release checkpoints.",
+    "Future QLoRA path should freeze quantized base weights and train small adapters."
+  ]
+}
+

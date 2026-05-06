@@ -1,0 +1,8 @@
+torch>=2.3
+tqdm>=4.66
+numpy>=1.26
+pytest>=8.0
+tokenizers>=0.20
+datasets>=3.0
+rich>=13.8
+zstandard>=0.23

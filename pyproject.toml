@@ -1,0 +1,52 @@
+[project]
+name = "gai1"
+version = "0.1.0"
+description = "Russian-first trainable LLM scaffold with reasoning runtime and MoE scale path."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [
+  { name = "GAI-1 Contributors" }
+]
+keywords = ["llm", "transformer", "russian", "sft", "lora", "reasoning", "cuda"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+  "torch>=2.3",
+  "tqdm>=4.66",
+  "numpy>=1.26",
+  "datasets>=3.0",
+  "huggingface-hub>=0.25",
+  "tokenizers>=0.20",
+  "rich>=13.8",
+  "zstandard>=0.23"
+]
+
+[project.optional-dependencies]
+dev = [
+  "build>=1.2",
+  "pytest>=8.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/GofMan5/gai-1"
+Issues = "https://github.com/GofMan5/gai-1/issues"
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

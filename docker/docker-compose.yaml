@@ -1,0 +1,7 @@
+services:
+  gai1:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    working_dir: /app
+    command: python scripts/prepare_sample_ru_dataset.py

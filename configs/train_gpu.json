@@ -1,0 +1,52 @@
+{
+  "run_name": "gai1_train_gpu",
+  "seed": 1337,
+  "model": {
+    "vocab_size": 32000,
+    "block_size": 768,
+    "n_layer": 12,
+    "n_head": 12,
+    "n_embd": 768,
+    "dropout": 0.05,
+    "rope_base": 10000.0,
+    "use_moe": true,
+    "n_experts": 4,
+    "n_experts_per_token": 2,
+    "moe_aux_loss_weight": 0.01
+  },
+  "tokenizer": {
+    "kind": "bpe",
+    "path": "data/tokenizer/gai1_tokenizer.json",
+    "vocab_size": 32000,
+    "min_frequency": 2,
+    "byte_fallback": true
+  },
+  "data": {
+    "train_path": "data/raw/fineweb2_ru_sample.jsonl",
+    "field": "text",
+    "block_size": 768
+  },
+  "train": {
+    "batch_size": 2,
+    "gradient_accumulation_steps": 16,
+    "learning_rate": 0.00016,
+    "weight_decay": 0.1,
+    "max_steps": 5000,
+    "grad_clip": 1.0,
+    "log_every": 5,
+    "save_every": 100,
+    "output_dir": "outputs/gai1_train_gpu",
+    "resume": true,
+    "save_optimizer_state": false,
+    "checkpoint_dtype": "fp16",
+    "device": "cuda",
+    "precision": "fp16",
+    "num_workers": 2,
+    "pin_memory": true,
+    "persistent_workers": true,
+    "prefetch_factor": 2,
+    "allow_tf32": true,
+    "matmul_precision": "high",
+    "compile": false
+  }
+}

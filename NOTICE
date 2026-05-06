@@ -1,0 +1,12 @@
+GAI-1
+Copyright 2026 GAI-1 Contributors
+
+This product includes software developed by the GAI-1 Contributors.
+
+This repository contains source code and configuration for training and
+serving local language model checkpoints. It does not include trained model
+weights or production datasets.
+
+Third-party datasets downloaded by scripts in this repository are governed
+by their own licenses and terms. Review each dataset card before training or
+redistributing any derived artifacts.
