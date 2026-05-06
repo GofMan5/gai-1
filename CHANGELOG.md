@@ -15,7 +15,7 @@ Initial public scaffold:
 - Tests and open-source project metadata.
 - Permanent experimental 256k context loading path with RoPE scaling, GQA config support,
   TUI visible-context stats, and training memory guards.
-- Incremental `train_100.bat` / `scripts/train_cycle.py` workflow for 100-step
+- Incremental `gai.bat cycle` / `scripts/train_cycle.py` workflow for 100-step
   progress checks with fixed prompts.
 - Quantized checkpoint v2 export with tied-weight aliases, tokenizer artifact
   metadata, relative source paths, source SHA256, generation config, and fp16
@@ -31,7 +31,7 @@ Initial public scaffold:
 - SFT/LoRA training metadata now records step, final loss, dataset hash,
   dataset record count, base checkpoint hash, and JSONL training logs.
 - Model-backed TUI reasoning drafts, larger RU data preparation, and staged
-  `train_until_quality.bat` pipeline for pretrain + chat LoRA + reasoning LoRA.
+  `gai.bat quality` pipeline for pretrain + chat LoRA + reasoning LoRA.
 - Streaming pretrain dataset path for large JSONL corpora and stronger RU
   generation eval gates for mojibake, Cyrillic ratio, repetition, and prompt echo.
 - RTX 3060 training optimization: fused AdamW support, JSONL throughput logs,
@@ -66,3 +66,6 @@ Initial public scaffold:
 - Context target hardening: project target is fixed at 262144 tokens, runtime
   load defaults resolve to that target, oversized context requests are rejected,
   and long-context validation metadata no longer overclaims without eval proof.
+- Unified Windows launcher: `gai.bat` is now the single root batch entrypoint
+  for setup, data/tokenizer prep, training, chat, serving, eval, quantization,
+  artifacts, tests, and diagnostics.

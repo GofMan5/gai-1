@@ -34,56 +34,56 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .[dev]
 ```
 
-For the local RTX 3060 setup helper:
+Use one launcher for normal work:
 
 ```powershell
-.\scripts\setup_rtx3060_windows.ps1
+.\gai.bat
 ```
 
 ## Quickstart
 
-Check CUDA:
+Recommended first path:
 
 ```powershell
-.\.venv\Scripts\python.exe .\scripts\check_accelerator.py
+.\gai.bat setup
+.\gai.bat doctor
+.\gai.bat prepare
+.\gai.bat pretrain
+.\gai.bat chat-lora 500
+.\gai.bat reasoning-lora 1000 visible high
+.\gai.bat chat
 ```
 
-Prepare a small Russian pretraining sample and tokenizer:
+Useful commands:
 
 ```powershell
-.\.venv\Scripts\python.exe .\scripts\download_fineweb2_ru.py --max-docs 1200
-.\.venv\Scripts\python.exe .\scripts\train_tokenizer.py
-```
-
-Train the base checkpoint:
-
-```powershell
-.\.venv\Scripts\python.exe .\scripts\train_pretrain.py
-```
-
-Local weights are saved under `outputs/`, not `checkpoints/`:
-
-```powershell
-.\.venv\Scripts\python.exe .\scripts\list_artifacts.py
+.\gai.bat
+.\gai.bat list
+.\gai.bat cycle sft 100
+.\gai.bat quality
+.\gai.bat autotune
+.\gai.bat serve
+.\gai.bat eval
+.\gai.bat quantize 8
+.\gai.bat test
 ```
 
 Make it follow chat instructions with LoRA SFT:
 
 ```powershell
-.\.venv\Scripts\python.exe .\scripts\download_ru_turbo_alpaca.py --max-records 5000
-.\train_chat_lora.bat 500
+.\gai.bat chat-lora 500
 ```
 
 Train a dedicated reasoning LoRA:
 
 ```powershell
-.\train_reasoning_lora.bat 1000 visible high
+.\gai.bat reasoning-lora 1000 visible high
 ```
 
 For gradual quality checks, run 100-step cycles:
 
 ```powershell
-.\train_100.bat sft 100
+.\gai.bat cycle sft 100
 ```
 
 This resumes the existing LoRA adapter when present and writes fixed-prompt
@@ -92,35 +92,35 @@ progress reports to `reports\progress_*.jsonl`.
 Run the TUI:
 
 ```powershell
-.\run_tui.bat
+.\gai.bat chat
 ```
 
-`run_tui.bat` auto-loads `outputs\gai1_sft_lora\adapter.pt` when it exists.
+`gai.bat chat` auto-loads `outputs\gai1_sft_lora\adapter.pt` when it exists.
 If `outputs\gai1_reasoning_lora\adapter.pt` exists, it is preferred and launches
 with the full reasoning view.
 
 Estimate how many steps are still needed:
 
 ```powershell
-.\.venv\Scripts\python.exe .\scripts\estimate_training_steps.py
+.\gai.bat estimate
 ```
 
 Prepare larger RU data and run the staged training pipeline:
 
 ```powershell
-.\train_until_quality.bat
+.\gai.bat quality
 ```
 
 For a stronger local run:
 
 ```powershell
-.\train_until_quality.bat --target-pretrain-step 12208 --chat-steps 1500 --reasoning-steps 3000
+.\gai.bat quality --target-pretrain-step 12208 --chat-steps 1500 --reasoning-steps 3000
 ```
 
 Autotune RTX 3060 throughput:
 
 ```powershell
-.\autotune_rtx3060.bat
+.\gai.bat autotune
 ```
 
 ## One Main Training Config
@@ -167,7 +167,7 @@ Manual launch:
 Runtime defaults to the permanent 256k target. You can pass it explicitly:
 
 ```powershell
-.\run_tui.bat --context-length 262144 --rope-scaling linear
+.\gai.bat chat --context-length 262144 --rope-scaling linear
 ```
 
 The current local checkpoint is not trained/evaluated at 256k. This only sets

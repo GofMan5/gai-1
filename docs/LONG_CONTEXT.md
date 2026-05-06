@@ -48,7 +48,7 @@ Release gates for calling a checkpoint 256k-ready:
 ## Local TUI Launch
 
 ```powershell
-.\run_tui.bat --context-length 262144 --rope-scaling linear
+.\gai.bat chat --context-length 262144 --rope-scaling linear
 ```
 
 This is useful for experimentation, not proof that the model understands 256k

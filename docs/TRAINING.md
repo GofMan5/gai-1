@@ -56,7 +56,7 @@ public placeholder. Inspect local weights with:
 Helper:
 
 ```powershell
-.\train_chat_lora.bat 500
+.\gai.bat chat-lora 500
 ```
 
 SFT uses prompt masking: loss is applied to assistant tokens only, not to the user prompt. This is the correct path for turning the base model into a chat model.
@@ -70,10 +70,10 @@ Output: `outputs/gai1_sft_lora/adapter.pt`.
 ## 3. Run Chat
 
 ```powershell
-.\run_tui.bat
+.\gai.bat chat
 ```
 
-`run_tui.bat` loads `outputs/gai1_sft_lora/adapter.pt` automatically when it exists.
+`gai.bat chat` loads `outputs/gai1_sft_lora/adapter.pt` automatically when it exists.
 
 ## 4. Reasoning SFT
 
@@ -81,7 +81,7 @@ The visible TUI trace is not enough by itself. To make the model learn a
 reasoning style, build teacher traces and train a separate LoRA:
 
 ```powershell
-.\train_reasoning_lora.bat 1000 visible high
+.\gai.bat reasoning-lora 1000 visible high
 ```
 
 Outputs:
@@ -97,7 +97,7 @@ Modes:
 - `controller` injects a hidden-controller plan into the prompt and trains only
   the final answer.
 
-When `outputs/gai1_reasoning_lora/adapter.pt` exists, `run_tui.bat` prefers it
+When `outputs/gai1_reasoning_lora/adapter.pt` exists, `gai.bat chat` prefers it
 over the plain chat LoRA and starts with `--reasoning-view full`.
 
 ## How Many Steps
@@ -125,14 +125,14 @@ Use the estimator:
 Prepare a larger RU pack and run the staged pipeline:
 
 ```powershell
-.\train_until_quality.bat
+.\gai.bat quality
 ```
 
 Default target is `4070` total pretrain steps, then chat LoRA and reasoning
 LoRA. A stronger local target:
 
 ```powershell
-.\train_until_quality.bat --target-pretrain-step 12208 --chat-steps 1500 --reasoning-steps 3000
+.\gai.bat quality --target-pretrain-step 12208 --chat-steps 1500 --reasoning-steps 3000
 ```
 
 The pipeline writes:
@@ -155,7 +155,7 @@ and sha256 hashes for input/train/validation files.
 Eval gates now fail closed: they require `--data` or `data.val_path` and refuse
 to evaluate on `data.train_path`. They check held-out perplexity plus basic RU
 generation quality: minimum length, Cyrillic ratio, mojibake, repetition, and
-prompt echo. `train_until_quality.bat` returns a non-zero exit code when eval
+prompt echo. `gai.bat quality` returns a non-zero exit code when eval
 fails unless `--allow-failed-eval` is passed.
 
 This still will not make the model Claude-level. Claude-like reasoning requires
@@ -172,7 +172,7 @@ quick experiments.
 Use this for gradual chat tuning:
 
 ```powershell
-.\train_100.bat sft 100
+.\gai.bat cycle sft 100
 ```
 
 It does three things:
@@ -185,7 +185,7 @@ It does three things:
 Use this for gradual base-model pretraining:
 
 ```powershell
-.\train_100.bat pretrain 100
+.\gai.bat cycle pretrain 100
 ```
 
 For pretraining, the helper reads the current `outputs/gai1_train_gpu/last.pt`
@@ -209,7 +209,7 @@ step and launches `train_pretrain.py` with the next target step.
 Autotune micro-batch on your exact machine:
 
 ```powershell
-.\autotune_rtx3060.bat
+.\gai.bat autotune
 ```
 
 This writes `configs/train_gpu_autotuned.json`. Use it like:

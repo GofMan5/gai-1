@@ -3,10 +3,10 @@
 Launch:
 
 ```powershell
-.\run_tui.bat
+.\gai.bat chat
 ```
 
-If `outputs/gai1_reasoning_lora\adapter.pt` exists, `run_tui.bat` loads it
+If `outputs/gai1_reasoning_lora\adapter.pt` exists, `gai.bat chat` loads it
 before the plain chat LoRA and opens the full reasoning view.
 
 Startup shows a loading screen with checkpoint, adapter, model, tokenizer,
@@ -34,7 +34,7 @@ Show the full reasoning controller view at startup:
 Experimental 256k context launch:
 
 ```powershell
-.\run_tui.bat --context-length 262144 --rope-scaling linear
+.\gai.bat chat --context-length 262144 --rope-scaling linear
 ```
 
 The TUI reports `visible ctx` separately from total accumulated tokens. The

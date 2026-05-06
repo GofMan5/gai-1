@@ -32,7 +32,7 @@ python .\scripts\reason.py --level high --task "Спроектируй pipeline 
 Сначала собери teacher-trace датасет и обучи reasoning LoRA:
 
 ```powershell
-.\train_reasoning_lora.bat 1000 visible high
+.\gai.bat reasoning-lora 1000 visible high
 ```
 
 `visible` учит модель давать короткое публичное рассуждение и ответ. `controller`
