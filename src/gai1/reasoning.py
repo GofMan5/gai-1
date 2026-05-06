@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Protocol
 
 
 ReasoningLevel = str
@@ -29,54 +29,10 @@ class ReasoningProfile:
 
 
 REASONING_PROFILES: dict[str, ReasoningProfile] = {
-    "low": ReasoningProfile(
-        level="low",
-        planning_depth=1,
-        draft_count=1,
-        critic_passes=0,
-        verifier_passes=0,
-        rollback_limit=0,
-        tool_budget=0,
-        private_token_budget=256,
-        self_consistency=False,
-        temperature=0.4,
-    ),
-    "medium": ReasoningProfile(
-        level="medium",
-        planning_depth=2,
-        draft_count=1,
-        critic_passes=1,
-        verifier_passes=1,
-        rollback_limit=1,
-        tool_budget=2,
-        private_token_budget=768,
-        self_consistency=False,
-        temperature=0.6,
-    ),
-    "high": ReasoningProfile(
-        level="high",
-        planning_depth=3,
-        draft_count=2,
-        critic_passes=2,
-        verifier_passes=2,
-        rollback_limit=2,
-        tool_budget=5,
-        private_token_budget=2048,
-        self_consistency=True,
-        temperature=0.7,
-    ),
-    "max": ReasoningProfile(
-        level="max",
-        planning_depth=4,
-        draft_count=3,
-        critic_passes=3,
-        verifier_passes=3,
-        rollback_limit=3,
-        tool_budget=8,
-        private_token_budget=4096,
-        self_consistency=True,
-        temperature=0.8,
-    ),
+    "low": ReasoningProfile("low", 1, 1, 0, 0, 0, 0, 256, False, 0.4),
+    "medium": ReasoningProfile("medium", 2, 1, 1, 1, 1, 2, 768, False, 0.6),
+    "high": ReasoningProfile("high", 3, 2, 2, 2, 2, 5, 2048, True, 0.7),
+    "max": ReasoningProfile("max", 4, 3, 3, 3, 3, 8, 4096, True, 0.8),
 }
 
 
@@ -164,7 +120,7 @@ class GAIReasoningRuntime:
         base = [
             "Определить тип задачи и критерий успеха.",
             "Выделить факты, ограничения и неизвестные места.",
-            "Собрать черновое решение.",
+            "Собрать черновой ответ.",
             "Проверить слабые места и противоречия.",
             "Сжать результат в финальный ответ без лишней воды.",
         ]

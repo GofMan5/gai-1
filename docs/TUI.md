@@ -28,13 +28,18 @@ Commands inside TUI:
 - `/level low|medium|high|max` - switch reasoning mode.
 - `/effort low|medium|high|max` - alias for `/level`.
 - `/stats` - show last runtime stats.
+- `/config` - show loaded checkpoint, adapter, context, dtype, and generation settings.
+- `/history` - show recent turns.
+- `/examples` - show useful starter prompts.
 - `/clear` - clear chat history.
 - `/quit` or `/exit` - close TUI.
 
 Panels:
 
-- `Chat` - recent messages and streaming output.
-- `Stats` - token counts, context size, latency, tokens/sec, VRAM, dtype/device/quant/adapter.
-- `Reasoning Trace` - runtime plan, verifier passes, critiques, rollbacks.
+- `Chat` - recent messages, turn numbers, separators, and streaming output.
+- `Runtime` - grouped model/runtime stats, token counts, visible context, latency, tokens/sec, VRAM.
+- `Reasoning Trace` - profile, plan, verifier passes, critiques, rollbacks.
 
 The reasoning trace is a runtime scaffold for control and visibility. It is not hidden model weights or real private chain-of-thought.
+
+Unknown slash commands show suggestions. Example: `/hlep` suggests `/help`.

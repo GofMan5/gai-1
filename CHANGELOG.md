@@ -20,3 +20,5 @@ Initial public scaffold:
 - Quantized checkpoint v2 export with tied-weight aliases, tokenizer artifact
   metadata, relative source paths, source SHA256, generation config, and fp16
   MoE router/gate weights for INT4.
+- TUI refresh cleanup, command suggestions, clearer turn separation, structured
+  reasoning panel, grouped runtime stats, and repetition penalty.

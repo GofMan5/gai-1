@@ -111,6 +111,8 @@ Inside the TUI:
 /effort high
 /effort max
 /stats
+/config
+/examples
 /clear
 /quit
 ```
