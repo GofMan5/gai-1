@@ -25,6 +25,7 @@ from gai1.data import SFTDataset
 from gai1.loading import LoadOptions, load_model
 from gai1.lora import LoRAConfig, inject_lora, lora_state_dict, trainable_parameter_count
 from gai1.tokenizer import BPETokenizer, ByteTokenizer
+from gai1.training import flatten_moe_metrics
 
 
 def configure_console() -> None:
@@ -331,7 +332,7 @@ def main() -> int:
             x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
             with autocast_context(torch.device(device), cfg.train.precision):
-                _logits, loss, _info = model(x, y)
+                _logits, loss, info = model(x, y)
             if loss is None:
                 raise RuntimeError("Loss was not produced")
             scaler.scale(loss / accumulation).backward()
@@ -355,20 +356,22 @@ def main() -> int:
             tokens_per_s = window_tokens / elapsed
             progress.set_postfix(loss=f"{last_loss:.4f}", **{"tok/s": f"{tokens_per_s:.0f}"})
             if step == 1 or step % int(cfg.train.log_every) == 0 or step == args.max_steps:
+                log_row = {
+                    "step": global_step,
+                    "run_step": step,
+                    "loss": last_loss,
+                    "lr": current_lr,
+                    "examples_seen": global_step * cfg.train.batch_size * accumulation,
+                    "tokens_seen": global_step * cfg.train.batch_size * accumulation * cfg.data.block_size,
+                    "tokens_per_s": tokens_per_s,
+                    "data_wait_s": window_data_wait_s,
+                    "window_s": elapsed,
+                    "created_at": utc_now(),
+                }
+                log_row.update(flatten_moe_metrics(info))
                 append_jsonl(
                     log_path,
-                    {
-                        "step": global_step,
-                        "run_step": step,
-                        "loss": last_loss,
-                        "lr": current_lr,
-                        "examples_seen": global_step * cfg.train.batch_size * accumulation,
-                        "tokens_seen": global_step * cfg.train.batch_size * accumulation * cfg.data.block_size,
-                        "tokens_per_s": tokens_per_s,
-                        "data_wait_s": window_data_wait_s,
-                        "window_s": elapsed,
-                        "created_at": utc_now(),
-                    },
+                    log_row,
                 )
                 window_start = now
                 window_tokens = 0

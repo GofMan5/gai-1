@@ -23,6 +23,7 @@ from gai1.config import load_config, save_json
 from gai1.data import PackedTextDataset, StreamingPackedTextDataset
 from gai1.model import GAIModel, format_param_count
 from gai1.tokenizer import BPETokenizer, ByteTokenizer
+from gai1.training import flatten_moe_metrics
 
 
 def configure_console() -> None:
@@ -290,6 +291,7 @@ def save_checkpoint(
             "lr_scheduler": cfg.train.lr_scheduler,
             "warmup_steps": cfg.train.warmup_steps,
             "min_learning_rate": cfg.train.min_learning_rate,
+            "moe_z_loss_weight": cfg.model.moe_z_loss_weight,
             "trained_context_length": cfg.model.block_size,
             "tested_context_length": cfg.model.block_size,
             "rope_scaling": cfg.model.rope_scaling,
@@ -372,11 +374,12 @@ def run_validation(
     loader: DataLoader,
     device: torch.device,
     cfg: Any,
-) -> dict[str, float]:
+) -> dict[str, Any]:
     raw_was_training = model.training
     model.eval()
     losses: list[float] = []
     moe_losses: list[float] = []
+    first_moe_metrics: dict[str, float | list[float]] = {}
     max_batches = max(1, int(cfg.train.eval_batches))
     with torch.no_grad():
         for idx, (x, y) in enumerate(loader):
@@ -389,16 +392,20 @@ def run_validation(
             if loss is not None:
                 losses.append(float(loss.detach()))
             moe_losses.append(float(info["moe_aux_loss"].detach()))
+            if not first_moe_metrics:
+                first_moe_metrics = flatten_moe_metrics(info, prefix="val_")
     if raw_was_training:
         model.train()
     if not losses:
         return {"val_loss": float("inf"), "val_ppl": float("inf"), "val_moe_aux_loss": 0.0}
     val_loss = sum(losses) / len(losses)
-    return {
+    row = {
         "val_loss": val_loss,
         "val_ppl": math.exp(min(20.0, val_loss)),
         "val_moe_aux_loss": sum(moe_losses) / max(1, len(moe_losses)),
     }
+    row.update(first_moe_metrics)
+    return row
 
 
 def main() -> int:
@@ -553,6 +560,7 @@ def main() -> int:
                     "micro_batch": int(cfg.train.batch_size),
                     "accumulation": accumulation,
                 }
+                log_row.update(flatten_moe_metrics(info))
                 if device.type == "cuda":
                     alloc_gb = torch.cuda.max_memory_allocated(device) / 1024**3
                     reserved_gb = torch.cuda.max_memory_reserved(device) / 1024**3

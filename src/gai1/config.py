@@ -23,6 +23,7 @@ class ModelConfig:
     n_experts: int = 4
     n_experts_per_token: int = 2
     moe_aux_loss_weight: float = 0.01
+    moe_z_loss_weight: float = 0.0
 
 
 @dataclass

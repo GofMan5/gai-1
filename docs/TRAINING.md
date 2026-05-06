@@ -27,6 +27,11 @@ The trainer also writes:
 Checkpoints include tokenizer metadata and dataset hashes so an incompatible
 tokenizer/data swap is visible instead of silently producing garbage.
 
+When `model.use_moe=true`, train and eval logs also include routing-health
+metrics: router entropy/confidence, z-loss, load CV/min/max, dead experts, and
+per-expert dispatch/primary-load arrays. These fields are diagnostics for
+expert collapse; they do not by themselves prove the model is good.
+
 `checkpoints/` is not the active training output directory. It is only a small
 public placeholder. Inspect local weights with:
 
@@ -189,6 +194,8 @@ step and launches `train_pretrain.py` with the next target step.
 - Effective batch `32`.
 - Tokenizer: `data/tokenizer/gai1_tokenizer.json`.
 - `train_log.jsonl` records tokens/sec, data wait time, VRAM, loss, and tokens seen.
+- MoE configs additionally log router/load health metrics so dead or collapsed
+  experts are visible during training.
 - `training_state.pt` records optimizer/scaler/RNG state even when public
   checkpoints keep optimizer payloads out of `last.pt`.
 

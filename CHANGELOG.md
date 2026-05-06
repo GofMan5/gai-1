@@ -52,3 +52,6 @@ Initial public scaffold:
   receive loss, long records are split into supervised windows with optional
   stride/overlap, SFT manifests log supervised/ignored token counts, and small
   datasets no longer hang behind `drop_last=True`.
+- MoE telemetry hardening: router z-loss support, per-expert importance/load
+  metrics, entropy/confidence/load-CV/dead-expert diagnostics, and pretrain/SFT
+  JSONL logging for routing health.

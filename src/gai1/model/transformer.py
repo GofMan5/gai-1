@@ -11,6 +11,13 @@ from torch.utils.checkpoint import checkpoint
 from gai1.config import ModelConfig
 
 
+def normalized_entropy(probs: torch.Tensor) -> torch.Tensor:
+    if probs.numel() <= 1:
+        return probs.new_tensor(1.0)
+    entropy = -(probs.clamp_min(1e-9) * probs.clamp_min(1e-9).log()).sum()
+    return entropy / probs.new_tensor(float(probs.numel())).log()
+
+
 class RMSNorm(nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6) -> None:
         super().__init__()
@@ -176,13 +183,13 @@ class SimpleMoE(nn.Module):
         self.gate = nn.Linear(cfg.n_embd, cfg.n_experts, bias=False)
         self.experts = nn.ModuleList(SwiGLU(cfg) for _ in range(cfg.n_experts))
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
         batch, seq_len, channels = x.shape
         flat = x.reshape(batch * seq_len, channels)
         router_logits = self.gate(flat)
         router_probs = router_logits.softmax(dim=-1)
-        top_weight, top_index = torch.topk(router_probs, self.top_k, dim=-1)
-        top_weight = top_weight / top_weight.sum(dim=-1, keepdim=True).clamp_min(1e-6)
+        top_weight_raw, top_index = torch.topk(router_probs, self.top_k, dim=-1)
+        top_weight = top_weight_raw / top_weight_raw.sum(dim=-1, keepdim=True).clamp_min(1e-6)
 
         output = torch.zeros_like(flat)
         for expert_id, expert in enumerate(self.experts):
@@ -195,8 +202,30 @@ class SimpleMoE(nn.Module):
 
         density = router_probs.mean(dim=0)
         load = F.one_hot(top_index, num_classes=self.n_experts).float().mean(dim=(0, 1))
+        primary_load = F.one_hot(top_index[:, 0], num_classes=self.n_experts).float().mean(dim=0)
         aux_loss = self.n_experts * torch.sum(density * load)
-        return output.view(batch, seq_len, channels), aux_loss
+        z_loss = torch.logsumexp(router_logits, dim=-1).pow(2).mean()
+        router_entropy = -(router_probs.clamp_min(1e-9) * router_probs.clamp_min(1e-9).log()).sum(dim=-1).mean()
+        router_entropy = router_entropy / router_probs.new_tensor(float(self.n_experts)).log()
+        load_std = load.std(unbiased=False)
+        load_mean = load.mean().clamp_min(1e-6)
+        metrics = {
+            "moe_importance": density.detach(),
+            "moe_dispatch_load": load.detach(),
+            "moe_primary_load": primary_load.detach(),
+            "moe_router_entropy": router_entropy.detach(),
+            "moe_router_confidence": top_weight_raw[:, 0].mean().detach(),
+            "moe_load_entropy": normalized_entropy(load).detach(),
+            "moe_load_std": load_std.detach(),
+            "moe_load_cv": (load_std / load_mean).detach(),
+            "moe_load_min": load.min().detach(),
+            "moe_load_max": load.max().detach(),
+            "moe_load_imbalance": (load.max() / load.mean().clamp_min(1e-6)).detach(),
+            "moe_dead_expert_fraction": (load <= 0).float().mean().detach(),
+            "moe_dead_experts": (load <= 0).sum().detach(),
+            "moe_router_z_loss": z_loss,
+        }
+        return output.view(batch, seq_len, channels), aux_loss, metrics
 
 
 class Block(nn.Module):
@@ -213,7 +242,7 @@ class Block(nn.Module):
         x: torch.Tensor,
         past_key_value: tuple[torch.Tensor, torch.Tensor] | None = None,
         use_cache: bool = False,
-    ) -> tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor, torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]] | tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor], tuple[torch.Tensor, torch.Tensor]]:
         if use_cache:
             attn_out, new_key_value = self.attn(self.norm_1(x), past_key_value=past_key_value, use_cache=True)
         else:
@@ -221,16 +250,17 @@ class Block(nn.Module):
             new_key_value = None
         x = x + attn_out
         if self.use_moe:
-            y, aux_loss = self.ffn(self.norm_2(x))
+            y, aux_loss, moe_metrics = self.ffn(self.norm_2(x))
         else:
             y = self.ffn(self.norm_2(x))
             aux_loss = x.new_tensor(0.0)
+            moe_metrics = {}
         x = x + y
         if use_cache:
             if new_key_value is None:
                 raise RuntimeError("Attention cache was not produced")
-            return x, aux_loss, new_key_value
-        return x, aux_loss
+            return x, aux_loss, moe_metrics, new_key_value
+        return x, aux_loss, moe_metrics
 
 
 class GAIModel(nn.Module):
@@ -272,25 +302,41 @@ class GAIModel(nn.Module):
             raise ValueError("targets cannot be used together with past_key_values")
         x = self.drop(self.token_embedding(idx))
         moe_aux = x.new_tensor(0.0)
+        moe_z_loss = x.new_tensor(0.0)
+        moe_metric_sums: dict[str, torch.Tensor] = {}
+        moe_metric_count = 0
         next_key_values: list[tuple[torch.Tensor, torch.Tensor]] = []
         if past_key_values is not None and len(past_key_values) != len(self.blocks):
             raise ValueError("past_key_values length must match number of blocks")
         for block_index, block in enumerate(self.blocks):
-            if self.gradient_checkpointing and self.training:
-                x, aux = checkpoint(block, x, use_reentrant=False)
+            if self.gradient_checkpointing and self.training and self.cfg.moe_z_loss_weight == 0.0:
+                x, aux = checkpoint(lambda hidden: block(hidden)[:2], x, use_reentrant=False)
+                block_metrics = {}
             elif use_cache:
                 past = None if past_key_values is None else past_key_values[block_index]
-                x, aux, new_key_value = block(x, past_key_value=past, use_cache=True)
+                x, aux, block_metrics, new_key_value = block(x, past_key_value=past, use_cache=True)
                 next_key_values.append(new_key_value)
             else:
-                x, aux = block(x)
+                x, aux, block_metrics = block(x)
             moe_aux = moe_aux + aux
+            if block_metrics:
+                moe_metric_count += 1
+                moe_z_loss = moe_z_loss + block_metrics["moe_router_z_loss"]
+                for key, value in block_metrics.items():
+                    if key == "moe_router_z_loss":
+                        continue
+                    moe_metric_sums[key] = moe_metric_sums.get(key, torch.zeros_like(value)) + value
         logits = self.lm_head(self.norm_f(x))
         loss = None
         if targets is not None:
             ce_loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), targets.reshape(-1), ignore_index=-100)
-            loss = ce_loss + (self.cfg.moe_aux_loss_weight * moe_aux)
-        info: dict[str, Any] = {"moe_aux_loss": moe_aux}
+            loss = ce_loss + (self.cfg.moe_aux_loss_weight * moe_aux) + (self.cfg.moe_z_loss_weight * moe_z_loss)
+        info: dict[str, Any] = {"moe_aux_loss": moe_aux, "moe_router_z_loss": moe_z_loss}
+        if moe_metric_count:
+            info["moe_aux_loss_per_layer"] = moe_aux / moe_metric_count
+            info["moe_router_z_loss_per_layer"] = moe_z_loss / moe_metric_count
+            for key, value in moe_metric_sums.items():
+                info[key] = value / moe_metric_count
         if use_cache:
             info["past_key_values"] = tuple(next_key_values)
         return logits, loss, info
