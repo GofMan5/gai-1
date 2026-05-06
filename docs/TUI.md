@@ -6,6 +6,9 @@ Launch:
 .\run_tui.bat
 ```
 
+If `outputs/gai1_reasoning_lora\adapter.pt` exists, `run_tui.bat` loads it
+before the plain chat LoRA and opens the full reasoning view.
+
 Startup shows a loading screen with checkpoint, adapter, model, tokenizer,
 reasoning-profile, and runtime warmup steps. This is expected; large CUDA
 checkpoints can take a few seconds to load.

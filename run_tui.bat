@@ -29,7 +29,9 @@ if not exist "outputs\gai1_train_gpu\last.pt" (
 )
 
 if "%~1"=="" (
-  if exist "outputs\gai1_sft_lora\adapter.pt" (
+  if exist "outputs\gai1_reasoning_lora\adapter.pt" (
+    ".venv\Scripts\python.exe" "scripts\tui.py" --checkpoint "outputs\gai1_train_gpu\last.pt" --adapter "outputs\gai1_reasoning_lora\adapter.pt" --level high --reasoning-view full
+  ) else if exist "outputs\gai1_sft_lora\adapter.pt" (
     ".venv\Scripts\python.exe" "scripts\tui.py" --checkpoint "outputs\gai1_train_gpu\last.pt" --adapter "outputs\gai1_sft_lora\adapter.pt" --level high
   ) else (
     ".venv\Scripts\python.exe" "scripts\tui.py" --checkpoint "outputs\gai1_train_gpu\last.pt" --level high
@@ -52,6 +54,7 @@ echo.
 echo With custom options:
 echo   run_tui.bat --level max --max-new-tokens 200
 echo   run_tui.bat --context-length 131072 --rope-scaling linear
+echo   run_tui.bat --adapter outputs\gai1_reasoning_lora\adapter.pt --reasoning-view full
 echo   run_tui.bat --adapter outputs\gai1_sft_lora\adapter.pt --level high
 echo   run_tui.bat --checkpoint outputs\quantized\last_int8.pt --level high
 echo.

@@ -26,3 +26,7 @@ Initial public scaffold:
   reasoning-profile, and warmup progress.
 - TUI full reasoning view with plan, drafts, critic, verifier, and prompt
   injection so effort levels affect generation instead of only side-panel UI.
+- Reasoning-SFT dataset builder, reasoning LoRA trainer, step estimator, and
+  TUI auto-load path for `outputs/gai1_reasoning_lora/adapter.pt`.
+- SFT/LoRA training metadata now records step, final loss, dataset hash,
+  dataset record count, base checkpoint hash, and JSONL training logs.

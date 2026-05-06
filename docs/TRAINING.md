@@ -40,6 +40,58 @@ Output: `outputs/gai1_sft_lora/adapter.pt`.
 
 `run_tui.bat` loads `outputs/gai1_sft_lora/adapter.pt` automatically when it exists.
 
+## 4. Reasoning SFT
+
+The visible TUI trace is not enough by itself. To make the model learn a
+reasoning style, build teacher traces and train a separate LoRA:
+
+```powershell
+.\train_reasoning_lora.bat 1000 visible high
+```
+
+Outputs:
+
+- `data/sft/reasoning_ru.jsonl` - generated reasoning-SFT records.
+- `outputs/gai1_reasoning_lora/adapter.pt` - reasoning adapter.
+- `outputs/gai1_reasoning_lora/manifest.json` - step/loss/dataset/base hashes.
+- `outputs/gai1_reasoning_lora/train_log.jsonl` - per-step training log.
+
+Modes:
+
+- `visible` trains short public reasoning plus final answer.
+- `controller` injects a hidden-controller plan into the prompt and trains only
+  the final answer.
+
+When `outputs/gai1_reasoning_lora/adapter.pt` exists, `run_tui.bat` prefers it
+over the plain chat LoRA and starts with `--reasoning-view full`.
+
+## How Many Steps
+
+Current local checkpoint is only `step=100`. With the RTX 3060 config, one
+optimizer step sees about `32 * 768 = 24,576` tokens, so the current base has
+seen only about `2.46M` tokens.
+
+Practical local targets:
+
+- Barely coherent RU chat base: `100M-300M` pretrain tokens, about `4k-12k`
+  total pretrain steps.
+- Stronger small local model: `500M-1B` pretrain tokens, about `20k-41k` total
+  pretrain steps.
+- Chat LoRA on 5k records: about `500-2k` steps for first useful behavior.
+- Reasoning LoRA on 5k teacher-trace records: about `1k-3k` steps for the first
+  visible improvement, `3k-10k` for more stable behavior.
+
+Use the estimator:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\estimate_training_steps.py
+```
+
+This still will not make the model Claude-level. Claude-like reasoning requires
+massive pretraining, curated reasoning traces, preference tuning, verifier/eval
+gates, and much larger compute. This repo now has the local training path for
+that direction, not the final capability.
+
 ## Incremental 100-Step Cycles
 
 Language-model training is controlled by optimizer steps, not classic epochs.

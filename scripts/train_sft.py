@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 from contextlib import nullcontext
+from datetime import datetime, timezone
+import hashlib
 import json
 import random
 import sys
@@ -41,6 +43,32 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resume-adapter", default=None)
     parser.add_argument("--context-length", type=int, default=None)
     return parser.parse_args()
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def jsonl_record_count(path: Path) -> int:
+    count = 0
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            if line.strip():
+                count += 1
+    return count
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def append_jsonl(path: Path, row: dict[str, Any]) -> None:
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def load_tokenizer(cfg: Any):
@@ -101,12 +129,14 @@ def main() -> int:
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     validate_context_budget(cfg, device)
+    checkpoint_path = ROOT / args.checkpoint
+    data_path = ROOT / (args.data or cfg.data.train_path)
     resume_adapter = ROOT / args.resume_adapter if args.resume_adapter else None
     if resume_adapter is not None and not resume_adapter.exists():
         resume_adapter = None
     model, metadata = load_model(
         LoadOptions(
-            checkpoint_path=ROOT / args.checkpoint,
+            checkpoint_path=checkpoint_path,
             device=device,
             dtype="auto",
             context_length=cfg.model.block_size,
@@ -125,7 +155,7 @@ def main() -> int:
 
     tokenizer = load_tokenizer(cfg)
     dataset = SFTDataset(
-        ROOT / (args.data or cfg.data.train_path),
+        data_path,
         tokenizer=tokenizer,
         block_size=cfg.data.block_size,
     )
@@ -133,14 +163,28 @@ def main() -> int:
     accumulation = max(1, cfg.train.gradient_accumulation_steps)
     out_dir = ROOT / args.out
     out_dir.mkdir(parents=True, exist_ok=True)
+    dataset_records = jsonl_record_count(data_path)
+    base_sha256 = file_sha256(checkpoint_path)
+    dataset_sha256 = file_sha256(data_path)
+    run_started_at = utc_now()
+    log_path = out_dir / "train_log.jsonl"
+    if log_path.exists():
+        log_path.unlink()
     (out_dir / "manifest.json").write_text(
         json.dumps(
             {
                 "stage": "sft_lora" if args.lora else "sft_full",
                 "base": args.checkpoint,
+                "base_sha256": base_sha256,
                 "base_metadata": metadata,
+                "data": str(data_path.relative_to(ROOT)) if data_path.is_relative_to(ROOT) else str(data_path),
+                "data_sha256": dataset_sha256,
+                "data_records": dataset_records,
                 "lora": args.lora,
                 "lora_rank": args.lora_rank,
+                "max_steps": args.max_steps,
+                "context_length": cfg.model.block_size,
+                "started_at": run_started_at,
                 "resume_adapter": str(resume_adapter) if resume_adapter is not None else None,
                 "lora_targets": replaced,
                 "trainable_params": trainable_parameter_count(model),
@@ -153,6 +197,7 @@ def main() -> int:
 
     step = 0
     micro = 0
+    last_loss = None
     progress = tqdm(total=args.max_steps, desc="sft")
     optimizer.zero_grad(set_to_none=True)
     while step < args.max_steps:
@@ -173,12 +218,58 @@ def main() -> int:
             scaler.update()
             optimizer.zero_grad(set_to_none=True)
             step += 1
+            last_loss = float(loss.detach())
             progress.update(1)
-            progress.set_postfix(loss=f"{float(loss.detach()):.4f}")
+            progress.set_postfix(loss=f"{last_loss:.4f}")
+            if step == 1 or step % int(cfg.train.log_every) == 0 or step == args.max_steps:
+                append_jsonl(
+                    log_path,
+                    {
+                        "step": step,
+                        "loss": last_loss,
+                        "lr": cfg.train.learning_rate,
+                        "examples_seen": step * cfg.train.batch_size * accumulation,
+                        "tokens_seen": step * cfg.train.batch_size * accumulation * cfg.data.block_size,
+                        "created_at": utc_now(),
+                    },
+                )
             if step >= args.max_steps:
                 break
     progress.close()
 
+    final_metadata = {
+        "step": step,
+        "max_steps": args.max_steps,
+        "final_loss": last_loss,
+        "created_at": utc_now(),
+        "started_at": run_started_at,
+        "config_path": args.config,
+        "base_checkpoint": args.checkpoint,
+        "base_sha256": base_sha256,
+        "data": str(data_path.relative_to(ROOT)) if data_path.is_relative_to(ROOT) else str(data_path),
+        "data_sha256": dataset_sha256,
+        "data_records": dataset_records,
+        "context_length": cfg.model.block_size,
+        "trainable_params": trainable_parameter_count(model),
+        "resume_adapter": str(resume_adapter) if resume_adapter is not None else None,
+        "train_log": str(log_path.relative_to(ROOT)) if log_path.is_relative_to(ROOT) else str(log_path),
+    }
+    (out_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "stage": "sft_lora" if args.lora else "sft_full",
+                "base": args.checkpoint,
+                "base_metadata": metadata,
+                "lora": args.lora,
+                "lora_rank": args.lora_rank,
+                "lora_targets": replaced,
+                **final_metadata,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     if args.lora:
         torch.save(
             {
@@ -187,6 +278,8 @@ def main() -> int:
                 "rank": args.lora_rank,
                 "alpha": 16.0,
                 "dropout": 0.05,
+                "step": step,
+                "metadata": final_metadata,
             },
             out_dir / "adapter.pt",
         )
@@ -195,9 +288,11 @@ def main() -> int:
         torch.save(
             {
                 "format": "gai1_checkpoint_v1",
+                "step": step,
                 "model_config": model.config_dict(),
                 "model_state": model.state_dict(),
                 "metadata": {
+                    **final_metadata,
                     "trained_context_length": model.cfg.block_size,
                     "tested_context_length": model.cfg.block_size,
                     "rope_scaling": model.cfg.rope_scaling,

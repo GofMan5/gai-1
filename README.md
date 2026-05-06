@@ -68,6 +68,12 @@ Make it follow chat instructions with LoRA SFT:
 .\train_chat_lora.bat 500
 ```
 
+Train a dedicated reasoning LoRA:
+
+```powershell
+.\train_reasoning_lora.bat 1000 visible high
+```
+
 For gradual quality checks, run 100-step cycles:
 
 ```powershell
@@ -84,6 +90,14 @@ Run the TUI:
 ```
 
 `run_tui.bat` auto-loads `outputs\gai1_sft_lora\adapter.pt` when it exists.
+If `outputs\gai1_reasoning_lora\adapter.pt` exists, it is preferred and launches
+with the full reasoning view.
+
+Estimate how many steps are still needed:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\estimate_training_steps.py
+```
 
 ## One Main Training Config
 

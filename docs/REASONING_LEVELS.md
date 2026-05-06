@@ -27,6 +27,18 @@ python .\scripts\reason.py --level high --task "Спроектируй pipeline 
 
 Эти уровни не заставляют модель магически умнеть. Они управляют runtime-циклом: сколько планировать, сколько черновиков делать, сколько раз критиковать, проверять и откатывать. В TUI компактный controller context добавляется в prompt модели, поэтому режим влияет на генерацию, но это все еще не скрытое нейронное chain-of-thought. Для настоящего качества эти traces потом надо использовать в SFT/reasoning-tuning и eval gates.
 
+## Как обучать модель reasoning-стилю
+
+Сначала собери teacher-trace датасет и обучи reasoning LoRA:
+
+```powershell
+.\train_reasoning_lora.bat 1000 visible high
+```
+
+`visible` учит модель давать короткое публичное рассуждение и ответ. `controller`
+учит отвечать по controller prompt без раскрытия trace. Для первых тестов
+используй `visible`, для TUI/agent режима потом пробуй `controller`.
+
 ## Как добавить уровень в будущем
 
 1. Открой `configs/reasoning_modes.json`.
