@@ -6,6 +6,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable, TypeVar
 
 import torch
 import torch.nn.functional as F
@@ -39,6 +40,7 @@ COMMANDS: dict[str, str] = {
     "/effort": "alias for /level",
 }
 LEVELS = ("low", "medium", "high", "max")
+T = TypeVar("T")
 
 
 @dataclass
@@ -112,6 +114,64 @@ def memory_stats(device: torch.device) -> tuple[float, float]:
     if device.type != "cuda":
         return 0.0, 0.0
     return torch.cuda.memory_allocated(device) / 1024**3, torch.cuda.memory_reserved(device) / 1024**3
+
+
+def format_size(path: Path) -> str:
+    if not path.exists():
+        return "missing"
+    size = path.stat().st_size
+    if size >= 1024**3:
+        return f"{size / 1024**3:.2f}GB"
+    if size >= 1024**2:
+        return f"{size / 1024**2:.2f}MB"
+    if size >= 1024:
+        return f"{size / 1024:.2f}KB"
+    return f"{size}B"
+
+
+def make_loading_panel(steps: list[tuple[str, str]], active: str = "") -> Panel:
+    table = Table.grid(padding=(0, 1))
+    table.add_column(style="cyan")
+    table.add_column(style="white")
+    for name, status in steps:
+        if status == "done":
+            marker = "[green]OK[/green]"
+        elif status == "active":
+            marker = "[yellow]..[/yellow]"
+        elif status == "skip":
+            marker = "[dim]--[/dim]"
+        else:
+            marker = "[dim]  [/dim]"
+        table.add_row(marker, name)
+    caption = active or "Preparing local inference runtime"
+    return Panel(table, title=f"GAI-1 Loading - {caption}", border_style="cyan", box=box.ROUNDED)
+
+
+def run_loading_step(console: Console, steps: list[tuple[str, str]], index: int, label: str, action: Callable[[], T]) -> T:
+    steps[index] = (label, "active")
+    console.clear()
+    console.print(make_loading_panel(steps, active=label))
+    start = time.perf_counter()
+    result = action()
+    steps[index] = (f"{label} ({time.perf_counter() - start:.1f}s)", "done")
+    return result
+
+
+def show_loaded_summary(console: Console, metadata: dict[str, object], elapsed_s: float, adapter: str | None) -> None:
+    table = Table.grid(padding=(0, 1))
+    table.add_column(style="cyan", justify="right")
+    table.add_column(style="white")
+    table.add_row("loaded in", f"{elapsed_s:.1f}s")
+    table.add_row("checkpoint", str(metadata.get("checkpoint_path")))
+    table.add_row("adapter", adapter or "none")
+    table.add_row("device", str(metadata.get("device")))
+    table.add_row("dtype", str(metadata.get("dtype")))
+    table.add_row("quant", str(metadata.get("quantization")))
+    table.add_row("context", str(metadata.get("context_length")))
+    table.add_row("trained ctx", str(metadata.get("trained_context_length")))
+    console.clear()
+    console.print(Panel(table, title="GAI-1 Ready", border_style="green", box=box.ROUNDED))
+    time.sleep(0.7)
 
 
 def make_stats_panel(stats: TurnStats, metadata: dict[str, object], level: str) -> Panel:
@@ -402,18 +462,60 @@ def main() -> int:
     args = parse_args()
     console = Console()
     adapter_path = ROOT / args.adapter if args.adapter else None
-    model, metadata = load_model(
-        LoadOptions(
-            checkpoint_path=ROOT / args.checkpoint,
-            device=args.device,
-            dtype=args.dtype,
-            adapter_path=adapter_path,
-            context_length=args.context_length,
-            rope_scaling=args.rope_scaling,
-        )
+    started = time.perf_counter()
+    checkpoint_path = ROOT / args.checkpoint
+    config_path = ROOT / args.config
+    profiles_path = ROOT / args.reasoning_profiles
+    steps: list[tuple[str, str]] = [
+        (f"check checkpoint {args.checkpoint} [{format_size(checkpoint_path)}]", "pending"),
+        (f"check adapter {args.adapter}" if args.adapter else "adapter skipped", "pending"),
+        (f"load model on {args.device}/{args.dtype}", "pending"),
+        (f"load tokenizer from {args.config}", "pending"),
+        (f"load reasoning profiles {args.reasoning_profiles}", "pending"),
+        ("warm up runtime metadata", "pending"),
+    ]
+
+    def check_checkpoint() -> None:
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
+    def check_adapter() -> None:
+        if args.adapter and adapter_path is not None and not adapter_path.exists():
+            raise FileNotFoundError(f"Adapter not found: {adapter_path}")
+
+    run_loading_step(console, steps, 0, steps[0][0], check_checkpoint)
+    if args.adapter:
+        run_loading_step(console, steps, 1, steps[1][0], check_adapter)
+    else:
+        steps[1] = (steps[1][0], "skip")
+
+    model, metadata = run_loading_step(
+        console,
+        steps,
+        2,
+        steps[2][0],
+        lambda: load_model(
+            LoadOptions(
+                checkpoint_path=checkpoint_path,
+                device=args.device,
+                dtype=args.dtype,
+                adapter_path=adapter_path,
+                context_length=args.context_length,
+                rope_scaling=args.rope_scaling,
+            )
+        ),
     )
-    tokenizer = load_chat_tokenizer(args.config)
-    profiles = load_reasoning_profiles(ROOT / args.reasoning_profiles)
+    tokenizer = run_loading_step(console, steps, 3, steps[3][0], lambda: load_chat_tokenizer(args.config))
+    profiles = run_loading_step(console, steps, 4, steps[4][0], lambda: load_reasoning_profiles(profiles_path))
+
+    def warmup() -> None:
+        _ = config_path.exists()
+        if torch.cuda.is_available() and str(metadata.get("device", "")).startswith("cuda"):
+            torch.cuda.synchronize()
+
+    run_loading_step(console, steps, 5, steps[5][0], warmup)
+    show_loaded_summary(console, metadata, time.perf_counter() - started, args.adapter)
+
     reasoning = GAIReasoningRuntime(level=args.level, profiles=profiles)
     level = args.level
     history: list[tuple[str, str]] = []

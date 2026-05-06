@@ -6,6 +6,10 @@ Launch:
 .\run_tui.bat
 ```
 
+Startup shows a loading screen with checkpoint, adapter, model, tokenizer,
+reasoning-profile, and runtime warmup steps. This is expected; large CUDA
+checkpoints can take a few seconds to load.
+
 Manual launch with a chat adapter:
 
 ```powershell

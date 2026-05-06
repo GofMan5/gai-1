@@ -22,3 +22,5 @@ Initial public scaffold:
   MoE router/gate weights for INT4.
 - TUI refresh cleanup, command suggestions, clearer turn separation, structured
   reasoning panel, grouped runtime stats, and repetition penalty.
+- TUI startup loading screen with checkpoint, adapter, model, tokenizer,
+  reasoning-profile, and warmup progress.
