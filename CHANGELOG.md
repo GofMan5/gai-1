@@ -30,3 +30,7 @@ Initial public scaffold:
   TUI auto-load path for `outputs/gai1_reasoning_lora/adapter.pt`.
 - SFT/LoRA training metadata now records step, final loss, dataset hash,
   dataset record count, base checkpoint hash, and JSONL training logs.
+- Model-backed TUI reasoning drafts, larger RU data preparation, and staged
+  `train_until_quality.bat` pipeline for pretrain + chat LoRA + reasoning LoRA.
+- Streaming pretrain dataset path for large JSONL corpora and stronger RU
+  generation eval gates for mojibake, Cyrillic ratio, repetition, and prompt echo.

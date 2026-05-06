@@ -1,6 +1,13 @@
 {
   "max_perplexity": 500.0,
-  "min_generation_chars": 1,
+  "min_generation_chars": 20,
+  "max_prompt_echo_ratio": 0.65,
+  "max_repetition_ratio": 0.45,
+  "min_cyrillic_ratio": 0.25,
+  "sample_prompts": [
+    "Привет. Кто ты? Ответь кратко и по-русски.",
+    "Объясни простыми словами, зачем модели нужен tokenizer.",
+    "Составь план из трех шагов для улучшения русской чат-модели."
+  ],
   "reasoning_levels": ["low", "medium", "high", "max"]
 }
-

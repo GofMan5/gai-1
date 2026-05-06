@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from gai1.config import load_config, save_json
-from gai1.data import PackedTextDataset
+from gai1.data import PackedTextDataset, StreamingPackedTextDataset
 from gai1.model import GAIModel, format_param_count
 from gai1.tokenizer import BPETokenizer, ByteTokenizer
 
@@ -77,11 +77,11 @@ def make_grad_scaler(device: torch.device, precision: str):
         return torch.cuda.amp.GradScaler(enabled=enabled)
 
 
-def make_loader(dataset: PackedTextDataset, cfg: Any, device: torch.device) -> DataLoader:
+def make_loader(dataset: torch.utils.data.Dataset, cfg: Any, device: torch.device, streaming: bool = False) -> DataLoader:
     num_workers = int(cfg.train.num_workers)
     kwargs: dict[str, Any] = {
         "batch_size": cfg.train.batch_size,
-        "shuffle": True,
+        "shuffle": False if streaming else True,
         "drop_last": True,
         "num_workers": num_workers,
         "pin_memory": device.type == "cuda" and bool(cfg.train.pin_memory),
@@ -237,13 +237,14 @@ def main() -> int:
     configure_acceleration(cfg, device)
     validate_context_budget(cfg, device)
     tokenizer = load_training_tokenizer(cfg)
-    dataset = PackedTextDataset(
+    dataset_cls = StreamingPackedTextDataset if bool(getattr(cfg.data, "streaming", False)) else PackedTextDataset
+    dataset = dataset_cls(
         path=ROOT / cfg.data.train_path,
         tokenizer=tokenizer,
         block_size=cfg.data.block_size,
         field=cfg.data.field,
     )
-    loader = make_loader(dataset, cfg, device)
+    loader = make_loader(dataset, cfg, device, streaming=bool(getattr(cfg.data, "streaming", False)))
     raw_model = GAIModel(cfg.model).to(device)
     raw_model.set_gradient_checkpointing(bool(cfg.train.gradient_checkpointing))
     model: torch.nn.Module = raw_model
@@ -273,6 +274,7 @@ def main() -> int:
             "num_workers": cfg.train.num_workers,
             "cuda_memory_at_start": cuda_memory_summary(device),
             "dataset": cfg.data.train_path,
+            "dataset_streaming": bool(getattr(cfg.data, "streaming", False)),
             "tokenizer": cfg.tokenizer.path,
         },
     )

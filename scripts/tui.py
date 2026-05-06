@@ -75,6 +75,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--reasoning-profiles", default="configs/reasoning_modes.json")
     parser.add_argument("--level", default="medium")
     parser.add_argument("--reasoning-view", default="full", choices=REASONING_VIEWS)
+    parser.add_argument("--reasoning-backend", default="model", choices=("model", "scaffold"))
+    parser.add_argument("--reasoning-draft-tokens", type=int, default=96)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--dtype", default="auto", choices=("auto", "fp32", "fp16", "bf16"))
     parser.add_argument("--max-new-tokens", type=int, default=120)
@@ -83,6 +85,47 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repetition-penalty", type=float, default=1.08)
     parser.add_argument("--history-turns", type=int, default=6)
     return parser.parse_args()
+
+
+class LocalModelGenerator:
+    def __init__(
+        self,
+        model: torch.nn.Module,
+        tokenizer: object,
+        max_new_tokens: int,
+        temperature: float,
+        top_k: int,
+        repetition_penalty: float,
+    ) -> None:
+        self.model = model
+        self.tokenizer = tokenizer
+        self.max_new_tokens = max_new_tokens
+        self.temperature = temperature
+        self.top_k = top_k
+        self.repetition_penalty = repetition_penalty
+
+    @torch.no_grad()
+    def complete(self, prompt: str) -> str:
+        device = next(self.model.parameters()).device
+        input_ids = self.tokenizer.encode(prompt, add_bos=True)  # type: ignore[attr-defined]
+        idx = torch.tensor([input_ids], dtype=torch.long, device=device)
+        generated: list[int] = []
+        for _ in range(self.max_new_tokens):
+            context = idx[:, -self.model.cfg.block_size :]  # type: ignore[attr-defined]
+            logits, _loss, _info = self.model(context)
+            logits = logits[:, -1, :] / max(self.temperature, 1e-6)
+            logits = apply_repetition_penalty(logits, generated, self.repetition_penalty)
+            if self.top_k > 0:
+                values, _indices = torch.topk(logits, min(self.top_k, logits.size(-1)))
+                logits[logits < values[:, [-1]]] = -float("inf")
+            probs = F.softmax(logits, dim=-1)
+            next_token = torch.multinomial(probs, num_samples=1)
+            token_id = int(next_token.item())
+            if token_id in {getattr(self.tokenizer, "eos_id", -1), getattr(self.tokenizer, "eot_id", -2)}:
+                break
+            generated.append(token_id)
+            idx = torch.cat((idx, next_token), dim=1)
+        return trim_answer(self.tokenizer.decode(generated)).strip()  # type: ignore[attr-defined]
 
 
 def load_chat_tokenizer(config_path: str):
@@ -114,6 +157,9 @@ def format_reasoning_context(trace: ReasoningTrace) -> str:
         "- plan:",
     ]
     lines.extend(f"  {index}. {item}" for index, item in enumerate(trace.plan, start=1))
+    if trace.final:
+        draft_summary = trace.final.replace("\n", " ").strip()
+        lines.append(f"- current draft summary: {draft_summary[:500]}")
     if trace.critiques:
         issues = [issue for batch in trace.critiques for issue in batch]
         if issues:
@@ -196,6 +242,7 @@ def show_loaded_summary(console: Console, metadata: dict[str, object], elapsed_s
     table.add_row("quant", str(metadata.get("quantization")))
     table.add_row("context", str(metadata.get("context_length")))
     table.add_row("trained ctx", str(metadata.get("trained_context_length")))
+    table.add_row("reasoning", str(metadata.get("reasoning_backend", "model")))
     console.clear()
     console.print(Panel(table, title="GAI-1 Ready", border_style="green", box=box.ROUNDED))
     time.sleep(0.7)
@@ -479,6 +526,7 @@ def print_config(console: Console, metadata: dict[str, object], args: argparse.N
         "trained_context_length",
         "tested_context_length",
         "rope_scaling",
+        "reasoning_backend",
     ):
         table.add_row(key, str(metadata.get(key)))
     table.add_row("max_new_tokens", str(args.max_new_tokens))
@@ -606,9 +654,20 @@ def main() -> int:
             torch.cuda.synchronize()
 
     run_loading_step(console, steps, 5, steps[5][0], warmup)
+    metadata["reasoning_backend"] = args.reasoning_backend
     show_loaded_summary(console, metadata, time.perf_counter() - started, args.adapter)
 
-    reasoning = GAIReasoningRuntime(level=args.level, profiles=profiles)
+    generator = None
+    if args.reasoning_backend == "model":
+        generator = LocalModelGenerator(
+            model=model,
+            tokenizer=tokenizer,
+            max_new_tokens=args.reasoning_draft_tokens,
+            temperature=max(0.25, args.temperature * 0.8),
+            top_k=args.top_k,
+            repetition_penalty=args.repetition_penalty,
+        )
+    reasoning = GAIReasoningRuntime(generator=generator, level=args.level, profiles=profiles)
     level = args.level
     reasoning_view = args.reasoning_view
     history: list[tuple[str, str]] = []

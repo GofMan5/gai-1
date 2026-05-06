@@ -24,6 +24,8 @@ data/raw/*.jsonl
 data/raw/*.jsonl.zst
 data/processed/*
 !data/processed/.gitkeep
+data/sft/*
+!data/sft/.gitkeep
 data/tokenizer/*
 !data/tokenizer/.gitkeep
 

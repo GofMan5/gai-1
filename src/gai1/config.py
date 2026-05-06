@@ -30,6 +30,7 @@ class DataConfig:
     train_path: str = "data/raw/sample_ru_chat.jsonl"
     field: str = "text"
     block_size: int = 256
+    streaming: bool = False
 
 
 @dataclass

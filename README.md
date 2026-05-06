@@ -99,6 +99,18 @@ Estimate how many steps are still needed:
 .\.venv\Scripts\python.exe .\scripts\estimate_training_steps.py
 ```
 
+Prepare larger RU data and run the staged training pipeline:
+
+```powershell
+.\train_until_quality.bat
+```
+
+For a stronger local run:
+
+```powershell
+.\train_until_quality.bat --target-pretrain-step 12208 --chat-steps 1500 --reasoning-steps 3000
+```
+
 ## One Main Training Config
 
 The primary GPU config is:

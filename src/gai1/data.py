@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, IterableDataset, get_worker_info
 
 USER_LABEL = "\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c"
 ASSISTANT_LABEL = "\u0410\u0441\u0441\u0438\u0441\u0442\u0435\u043d\u0442"
@@ -159,3 +159,53 @@ class PackedTextDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
         chunk = self.tokens[index : index + self.block_size + 1]
         return chunk[:-1], chunk[1:]
+
+
+class StreamingPackedTextDataset(IterableDataset[tuple[torch.Tensor, torch.Tensor]]):
+    def __init__(
+        self,
+        path: str | Path,
+        tokenizer: object,
+        block_size: int,
+        field: str = "text",
+    ) -> None:
+        self.path = Path(path)
+        self.tokenizer = tokenizer
+        self.block_size = block_size
+        self.field = field
+        self.eot_id = int(getattr(tokenizer, "eot_id", 3))
+
+    def _row_text(self, row: dict[str, object]) -> str:
+        if self.field in row:
+            return str(row[self.field])
+        return format_sft_record(row)
+
+    def _iter_texts(self):
+        worker = get_worker_info()
+        worker_id = worker.id if worker is not None else 0
+        worker_count = worker.num_workers if worker is not None else 1
+        with self.path.open("r", encoding="utf-8") as fh:
+            for line_no, line in enumerate(fh):
+                if worker_count > 1 and line_no % worker_count != worker_id:
+                    continue
+                line = line.strip()
+                if not line:
+                    continue
+                row = json.loads(line)
+                if not isinstance(row, dict):
+                    continue
+                text = self._row_text(row).strip()
+                if text:
+                    yield text
+
+    def __iter__(self):
+        buffer: list[int] = []
+        for text in self._iter_texts():
+            buffer.extend(self.tokenizer.encode(text, add_bos=True, add_eos=True))
+            buffer.append(self.eot_id)
+            while len(buffer) >= self.block_size + 1:
+                chunk = buffer[: self.block_size + 1]
+                del buffer[: self.block_size]
+                x = torch.tensor(chunk[:-1], dtype=torch.long)
+                y = torch.tensor(chunk[1:], dtype=torch.long)
+                yield x, y

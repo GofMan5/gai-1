@@ -19,6 +19,12 @@ Manual launch with a chat adapter:
 .\.venv\Scripts\python.exe .\scripts\tui.py --checkpoint .\outputs\gai1_train_gpu\last.pt --adapter .\outputs\gai1_sft_lora\adapter.pt --level high
 ```
 
+Force static scaffold reasoning instead of model-backed drafts:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\tui.py --reasoning-backend scaffold
+```
+
 Show the full reasoning controller view at startup:
 
 ```powershell

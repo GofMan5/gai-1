@@ -53,3 +53,16 @@ def test_load_custom_reasoning_profile(tmp_path) -> None:
     profiles = load_reasoning_profiles(config)
     runtime = GAIReasoningRuntime(level="extreme", profiles=profiles)
     assert runtime.profile.private_token_budget == 8192
+
+
+def test_reasoning_runtime_uses_generator_for_drafts() -> None:
+    class DummyGenerator:
+        def complete(self, prompt: str) -> str:
+            assert "Reasoning level: medium" in prompt
+            return "Сгенерированный моделью черновик с нормальной структурой."
+
+    runtime = GAIReasoningRuntime(generator=DummyGenerator(), level="medium")
+    trace = runtime.run("Проверь генератор")
+
+    assert trace.drafts == ["Сгенерированный моделью черновик с нормальной структурой."]
+    assert trace.final.startswith("Сгенерированный моделью")

@@ -87,6 +87,31 @@ Use the estimator:
 .\.venv\Scripts\python.exe .\scripts\estimate_training_steps.py
 ```
 
+Prepare a larger RU pack and run the staged pipeline:
+
+```powershell
+.\train_until_quality.bat
+```
+
+Default target is `4070` total pretrain steps, then chat LoRA and reasoning
+LoRA. A stronger local target:
+
+```powershell
+.\train_until_quality.bat --target-pretrain-step 12208 --chat-steps 1500 --reasoning-steps 3000
+```
+
+The pipeline writes:
+
+- `data/raw/fineweb2_ru_large.jsonl`
+- `data/raw/ru_turbo_alpaca_large.jsonl`
+- `data/sft/reasoning_ru.jsonl`
+- `reports/train_until_quality.jsonl`
+
+The generated large pretrain config enables streaming JSONL reads, so the web
+corpus is not loaded fully into RAM. Eval gates now check perplexity plus basic
+RU generation quality: minimum length, Cyrillic ratio, mojibake, repetition, and
+prompt echo.
+
 This still will not make the model Claude-level. Claude-like reasoning requires
 massive pretraining, curated reasoning traces, preference tuning, verifier/eval
 gates, and much larger compute. This repo now has the local training path for
