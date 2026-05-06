@@ -34,3 +34,5 @@ Initial public scaffold:
   `train_until_quality.bat` pipeline for pretrain + chat LoRA + reasoning LoRA.
 - Streaming pretrain dataset path for large JSONL corpora and stronger RU
   generation eval gates for mojibake, Cyrillic ratio, repetition, and prompt echo.
+- RTX 3060 training optimization: fused AdamW support, JSONL throughput logs,
+  dataloader wait metrics, VRAM tracking, and micro-batch autotune helper.

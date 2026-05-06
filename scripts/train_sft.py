@@ -4,9 +4,11 @@ import argparse
 from contextlib import nullcontext
 from datetime import datetime, timezone
 import hashlib
+import inspect
 import json
 import random
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +71,20 @@ def utc_now() -> str:
 def append_jsonl(path: Path, row: dict[str, Any]) -> None:
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def make_optimizer(parameters, cfg: Any, device: str) -> torch.optim.Optimizer:
+    kwargs: dict[str, Any] = {
+        "lr": cfg.train.learning_rate,
+        "weight_decay": cfg.train.weight_decay,
+    }
+    if device == "cuda" and bool(getattr(cfg.train, "fused_optimizer", True)):
+        try:
+            if "fused" in inspect.signature(torch.optim.AdamW).parameters:
+                kwargs["fused"] = True
+        except (TypeError, ValueError):
+            pass
+    return torch.optim.AdamW(parameters, **kwargs)
 
 
 def load_tokenizer(cfg: Any):
@@ -150,7 +166,8 @@ def main() -> int:
     elif args.lora:
         replaced = [f"resumed:{resume_adapter}"]
     model.train()
-    optimizer = torch.optim.AdamW((p for p in model.parameters() if p.requires_grad), lr=cfg.train.learning_rate, weight_decay=cfg.train.weight_decay)
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    optimizer = make_optimizer(trainable_params, cfg, device)
     scaler = torch.amp.GradScaler("cuda", enabled=device == "cuda")
 
     tokenizer = load_tokenizer(cfg)
@@ -185,6 +202,7 @@ def main() -> int:
                 "max_steps": args.max_steps,
                 "context_length": cfg.model.block_size,
                 "started_at": run_started_at,
+                "fused_optimizer": any(group.get("fused", False) for group in optimizer.param_groups),
                 "resume_adapter": str(resume_adapter) if resume_adapter is not None else None,
                 "lora_targets": replaced,
                 "trainable_params": trainable_parameter_count(model),
@@ -200,8 +218,14 @@ def main() -> int:
     last_loss = None
     progress = tqdm(total=args.max_steps, desc="sft")
     optimizer.zero_grad(set_to_none=True)
+    last_fetch_end = time.perf_counter()
+    window_start = time.perf_counter()
+    window_tokens = 0
+    window_data_wait_s = 0.0
     while step < args.max_steps:
         for x, y in loader:
+            batch_ready = time.perf_counter()
+            window_data_wait_s += batch_ready - last_fetch_end
             x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
             with autocast_context(torch.device(device), cfg.train.precision):
@@ -211,16 +235,21 @@ def main() -> int:
             scaler.scale(loss / accumulation).backward()
             micro += 1
             if micro % accumulation:
+                last_fetch_end = time.perf_counter()
                 continue
             scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_((p for p in model.parameters() if p.requires_grad), cfg.train.grad_clip)
+            torch.nn.utils.clip_grad_norm_(trainable_params, cfg.train.grad_clip)
             scaler.step(optimizer)
             scaler.update()
             optimizer.zero_grad(set_to_none=True)
             step += 1
             last_loss = float(loss.detach())
+            window_tokens += int(cfg.train.batch_size) * int(cfg.data.block_size) * accumulation
             progress.update(1)
-            progress.set_postfix(loss=f"{last_loss:.4f}")
+            now = time.perf_counter()
+            elapsed = max(now - window_start, 1e-6)
+            tokens_per_s = window_tokens / elapsed
+            progress.set_postfix(loss=f"{last_loss:.4f}", **{"tok/s": f"{tokens_per_s:.0f}"})
             if step == 1 or step % int(cfg.train.log_every) == 0 or step == args.max_steps:
                 append_jsonl(
                     log_path,
@@ -230,11 +259,18 @@ def main() -> int:
                         "lr": cfg.train.learning_rate,
                         "examples_seen": step * cfg.train.batch_size * accumulation,
                         "tokens_seen": step * cfg.train.batch_size * accumulation * cfg.data.block_size,
+                        "tokens_per_s": tokens_per_s,
+                        "data_wait_s": window_data_wait_s,
+                        "window_s": elapsed,
                         "created_at": utc_now(),
                     },
                 )
+                window_start = now
+                window_tokens = 0
+                window_data_wait_s = 0.0
             if step >= args.max_steps:
                 break
+            last_fetch_end = time.perf_counter()
     progress.close()
 
     final_metadata = {
@@ -250,6 +286,7 @@ def main() -> int:
         "data_sha256": dataset_sha256,
         "data_records": dataset_records,
         "context_length": cfg.model.block_size,
+        "fused_optimizer": any(group.get("fused", False) for group in optimizer.param_groups),
         "trainable_params": trainable_parameter_count(model),
         "resume_adapter": str(resume_adapter) if resume_adapter is not None else None,
         "train_log": str(log_path.relative_to(ROOT)) if log_path.is_relative_to(ROOT) else str(log_path),

@@ -48,6 +48,7 @@
     "prefetch_factor": 2,
     "allow_tf32": true,
     "matmul_precision": "high",
-    "compile": false
+    "compile": false,
+    "fused_optimizer": true
   }
 }

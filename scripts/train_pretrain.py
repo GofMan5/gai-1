@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import argparse
 from contextlib import nullcontext
+import inspect
+import json
 import random
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -90,6 +93,25 @@ def make_loader(dataset: torch.utils.data.Dataset, cfg: Any, device: torch.devic
         kwargs["persistent_workers"] = bool(cfg.train.persistent_workers)
         kwargs["prefetch_factor"] = int(cfg.train.prefetch_factor)
     return DataLoader(dataset, **kwargs)
+
+
+def make_optimizer(parameters, cfg: Any, device: torch.device) -> torch.optim.Optimizer:
+    kwargs: dict[str, Any] = {
+        "lr": cfg.train.learning_rate,
+        "weight_decay": cfg.train.weight_decay,
+    }
+    if device.type == "cuda" and bool(getattr(cfg.train, "fused_optimizer", True)):
+        try:
+            if "fused" in inspect.signature(torch.optim.AdamW).parameters:
+                kwargs["fused"] = True
+        except (TypeError, ValueError):
+            pass
+    return torch.optim.AdamW(parameters, **kwargs)
+
+
+def append_jsonl(path: Path, row: dict[str, Any]) -> None:
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def cuda_memory_summary(device: torch.device) -> dict[str, float]:
@@ -250,16 +272,13 @@ def main() -> int:
     model: torch.nn.Module = raw_model
     if cfg.train.compile and hasattr(torch, "compile"):
         model = torch.compile(model)
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=cfg.train.learning_rate,
-        weight_decay=cfg.train.weight_decay,
-    )
+    optimizer = make_optimizer(model.parameters(), cfg, device)
     scaler = make_grad_scaler(device, cfg.train.precision)
     accumulation = max(1, int(cfg.train.gradient_accumulation_steps))
 
     out_dir = ROOT / cfg.train.output_dir
     out_dir.mkdir(parents=True, exist_ok=True)
+    train_log_path = out_dir / "train_log.jsonl"
     save_json(
         out_dir / "run_manifest.json",
         {
@@ -272,6 +291,12 @@ def main() -> int:
             "gradient_accumulation_steps": accumulation,
             "effective_batch_size": cfg.train.batch_size * accumulation,
             "num_workers": cfg.train.num_workers,
+            "pin_memory": cfg.train.pin_memory,
+            "persistent_workers": cfg.train.persistent_workers,
+            "prefetch_factor": cfg.train.prefetch_factor,
+            "fused_optimizer": any(group.get("fused", False) for group in optimizer.param_groups),
+            "torch_compile": bool(cfg.train.compile),
+            "gradient_checkpointing": bool(cfg.train.gradient_checkpointing),
             "cuda_memory_at_start": cuda_memory_summary(device),
             "dataset": cfg.data.train_path,
             "dataset_streaming": bool(getattr(cfg.data, "streaming", False)),
@@ -298,8 +323,14 @@ def main() -> int:
     model.train()
     progress = tqdm(total=cfg.train.max_steps, initial=min(step, cfg.train.max_steps), desc="train")
     optimizer.zero_grad(set_to_none=True)
+    last_fetch_end = time.perf_counter()
+    window_start = time.perf_counter()
+    window_tokens = 0
+    window_data_wait_s = 0.0
     while step < cfg.train.max_steps:
         for x, y in loader:
+            batch_ready = time.perf_counter()
+            window_data_wait_s += batch_ready - last_fetch_end
             x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
             with autocast_context(device, cfg.train.precision):
@@ -310,6 +341,7 @@ def main() -> int:
             scaler.scale(scaled_loss).backward()
             micro_step += 1
             if micro_step % accumulation != 0:
+                last_fetch_end = time.perf_counter()
                 continue
 
             scaler.unscale_(optimizer)
@@ -319,19 +351,44 @@ def main() -> int:
             optimizer.zero_grad(set_to_none=True)
 
             step += 1
+            window_tokens += int(cfg.train.batch_size) * int(cfg.data.block_size) * accumulation
             if step % cfg.train.log_every == 0:
+                now = time.perf_counter()
+                elapsed = max(now - window_start, 1e-6)
+                tokens_per_s = window_tokens / elapsed
                 postfix = {
                     "loss": f"{float(loss.detach()):.4f}",
                     "moe_aux": f"{float(info['moe_aux_loss'].detach()):.4f}",
+                    "tok/s": f"{tokens_per_s:.0f}",
+                }
+                log_row = {
+                    "step": step,
+                    "loss": float(loss.detach()),
+                    "moe_aux_loss": float(info["moe_aux_loss"].detach()),
+                    "tokens_per_s": tokens_per_s,
+                    "tokens_seen": step * int(cfg.train.batch_size) * int(cfg.train.gradient_accumulation_steps) * int(cfg.data.block_size),
+                    "data_wait_s": window_data_wait_s,
+                    "window_s": elapsed,
+                    "micro_batch": int(cfg.train.batch_size),
+                    "accumulation": accumulation,
                 }
                 if device.type == "cuda":
-                    postfix["vram"] = f"{torch.cuda.max_memory_allocated(device) / 1024**3:.2f}GB"
+                    alloc_gb = torch.cuda.max_memory_allocated(device) / 1024**3
+                    reserved_gb = torch.cuda.max_memory_reserved(device) / 1024**3
+                    postfix["vram"] = f"{alloc_gb:.2f}GB"
+                    log_row["vram_allocated_gb"] = alloc_gb
+                    log_row["vram_reserved_gb"] = reserved_gb
                 progress.set_postfix(postfix)
+                append_jsonl(train_log_path, log_row)
+                window_start = now
+                window_tokens = 0
+                window_data_wait_s = 0.0
             if step % cfg.train.save_every == 0:
                 save_checkpoint(out_dir / "last.pt", model, optimizer, scaler, step, args.config, cfg)
             progress.update(1)
             if step >= cfg.train.max_steps:
                 break
+            last_fetch_end = time.perf_counter()
     progress.close()
     save_checkpoint(out_dir / "last.pt", model, optimizer, scaler, step, args.config, cfg)
     print(f"Saved checkpoint: {out_dir / 'last.pt'}")

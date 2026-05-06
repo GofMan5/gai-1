@@ -66,6 +66,7 @@ class TrainConfig:
     matmul_precision: str = "high"
     compile: bool = False
     gradient_checkpointing: bool = False
+    fused_optimizer: bool = True
     allow_unsafe_long_context: bool = False
     max_attention_memory_fraction: float = 0.75
 

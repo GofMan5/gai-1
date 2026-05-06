@@ -149,8 +149,22 @@ step and launches `train_pretrain.py` with the next target step.
 
 - CUDA with fp16 AMP.
 - TF32 enabled for matmul where supported.
+- Fused AdamW when the installed PyTorch build supports it.
 - Micro-batch `2`, gradient accumulation `16`.
 - Effective batch `32`.
 - Tokenizer: `data/tokenizer/gai1_tokenizer.json`.
+- `train_log.jsonl` records tokens/sec, data wait time, VRAM, loss, and tokens seen.
+
+Autotune micro-batch on your exact machine:
+
+```powershell
+.\autotune_rtx3060.bat
+```
+
+This writes `configs/train_gpu_autotuned.json`. Use it like:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\train_pretrain.py --config .\configs\train_gpu_autotuned.json
+```
 
 If VRAM is not enough, first lower `train.batch_size` from `2` to `1` in `configs/train_gpu.json`.

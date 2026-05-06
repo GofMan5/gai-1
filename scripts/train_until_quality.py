@@ -67,6 +67,7 @@ def write_large_config() -> str:
     payload["data"]["train_path"] = "data/raw/fineweb2_ru_large.jsonl"
     payload["data"]["streaming"] = True
     payload["train"]["resume"] = True
+    payload["train"]["fused_optimizer"] = True
     target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return str(target.relative_to(ROOT))
 

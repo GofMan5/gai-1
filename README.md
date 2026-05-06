@@ -111,6 +111,12 @@ For a stronger local run:
 .\train_until_quality.bat --target-pretrain-step 12208 --chat-steps 1500 --reasoning-steps 3000
 ```
 
+Autotune RTX 3060 throughput:
+
+```powershell
+.\autotune_rtx3060.bat
+```
+
 ## One Main Training Config
 
 The primary GPU config is:
