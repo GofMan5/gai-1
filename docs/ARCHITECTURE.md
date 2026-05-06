@@ -1,65 +1,81 @@
 # GAI-1 Architecture
 
-GAI-1 строится как модельная фабрика, а не один скрипт.
+GAI-1 is a model factory scaffold, not a single script.
 
-## Контуры
+## Layers
 
 1. `model core` - decoder-only Transformer/MoE.
-2. `data engine` - ingestion, cleaning, dedupe, tokenizer, shards, manifests.
-3. `training` - pretrain, continued pretrain, SFT, DPO/RL later.
+2. `data engine` - ingestion, cleaning, tokenizer, shards, manifests.
+3. `training` - pretrain, continued pretrain, SFT, preference tuning later.
 4. `reasoning runtime` - planner, drafts, critic, verifier, rollback, final renderer.
-5. `serving` - fp16/int8/int4 checkpoints, later vLLM/TensorRT-LLM.
+5. `serving` - fp16/int8/int4 checkpoints, later vLLM or TensorRT-LLM.
 
-## Текущее Ядро
+## Current Core
 
 - RMSNorm.
-- RoPE with cache.
+- RoPE with cache and optional scaling.
 - PyTorch SDPA causal attention.
+- Optional GQA through `n_kv_head`.
 - SwiGLU.
 - Optional simple top-k MoE.
 - AMP fp16 training.
+- Optional gradient checkpointing.
 - Gradient accumulation.
 - fp16 checkpoint storage.
 - int8/int4 quantized release export.
 
+## Long Context
+
+The target path includes 8k, 32k, and 128k context stages. Current code can
+load a checkpoint with a larger context window using RoPE scaling, but a
+checkpoint is not considered 128k-ready until it has been context-tuned and
+evaluated at that length.
+
+Full-attention 128k training is not realistic on RTX 3060 12GB. See
+`docs/LONG_CONTEXT.md`.
+
 ## RTX 3060 12GB Training
 
-Есть один канонический GPU-тренинг:
+Canonical local GPU training config:
 
-- `configs/train_gpu.json`
+```text
+configs/train_gpu.json
+```
 
-Он использует CUDA, fp16 AMP, TF32, pinned memory и gradient accumulation. 32GB RAM используется для dataloader/cache без бессмысленного раздувания. Другие локальные training-конфиги убраны, чтобы не было путаницы.
+It uses CUDA, fp16 AMP, TF32, pinned memory, and gradient accumulation.
 
 ## Reasoning Levels
 
-Режимы `low`, `medium`, `high`, `max` управляют не магией модели, а runtime-циклом:
+Reasoning modes `low`, `medium`, `high`, `max` control a runtime loop:
 
-- глубина плана;
-- число черновиков;
-- число critic/verifier passes;
+- planning depth;
+- draft count;
+- critic/verifier passes;
 - rollback budget;
 - tool budget;
 - private token budget;
 - self-consistency.
 
-Профили лежат в `configs/reasoning_modes.json`. Добавить новый уровень можно через JSON без правки Python-кода, если набор полей тот же.
+Profiles live in `configs/reasoning_modes.json`.
 
 ## Quantization
 
-Квантование не уменьшает число параметров. Оно уменьшает байты на параметр:
+Quantization reduces bytes per parameter, not parameter count:
 
 - fp32: 4 bytes;
 - fp16/bf16: 2 bytes;
 - int8: 1 byte;
 - int4: 0.5 bytes.
 
-Текущий `export_quantized.py` делает storage quantization. Для настоящей экономии VRAM на inference нужен следующий слой: quantized kernels через vLLM/TensorRT-LLM или отдельные int4/int8 linear layers.
+Current `export_quantized.py` is storage quantization. Real inference VRAM
+savings need quantized kernels through an inference engine or dedicated int4/int8
+linear layers.
 
-## Что Улучшать Дальше
+## Next Improvements
 
-1. Нормальный RU-first BPE/SentencePiece tokenizer вместо byte tokenizer.
-2. Packed binary shards вместо чтения JSONL в память.
-3. LoRA/QLoRA adapters отдельно от base checkpoint.
-4. Eval gates для русского чата, reasoning, code и safety.
+1. Larger RU-first tokenizer.
+2. Packed binary data shards.
+3. QLoRA path.
+4. Long-context eval gates.
 5. vLLM-compatible export.
-6. MoE training через Megatron/NeMo, когда локальный dense pipeline стабилен.
+6. MoE training through Megatron/NeMo when the local dense path is stable.

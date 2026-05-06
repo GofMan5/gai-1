@@ -27,6 +27,8 @@ Use this checklist before tagging or publishing a GitHub release.
 - Safety limitations are documented in `DISCLAIMER.md` and `MODEL_CARD.md`.
 - Eval gates are run on release checkpoints.
 - Known failure modes are listed in release notes.
+- Long-context claims include explicit trained/tested context lengths and eval
+  results. Do not call a checkpoint 128k-ready based only on RoPE scaling.
 
 ## GitHub
 

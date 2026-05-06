@@ -38,6 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-steps", type=int, default=500)
     parser.add_argument("--lora", action="store_true")
     parser.add_argument("--lora-rank", type=int, default=8)
+    parser.add_argument("--context-length", type=int, default=None)
     return parser.parse_args()
 
 
@@ -53,17 +54,56 @@ def autocast_context(device: torch.device, precision: str):
     return torch.autocast(device_type="cuda", dtype=torch.float16 if precision in {"auto", "fp16"} else torch.bfloat16)
 
 
+def estimate_attention_scores_gb(cfg: Any, dtype_bytes: int = 2) -> float:
+    batch = int(cfg.train.batch_size)
+    seq = int(cfg.data.block_size)
+    heads = int(cfg.model.n_head)
+    layers = int(cfg.model.n_layer)
+    return batch * heads * seq * seq * dtype_bytes * layers / 1024**3
+
+
+def validate_context_budget(cfg: Any, device: str) -> None:
+    if int(cfg.model.block_size) != int(cfg.data.block_size):
+        raise ValueError(f"model.block_size ({cfg.model.block_size}) must equal data.block_size ({cfg.data.block_size})")
+    if cfg.model.rope_scaling not in {"none", "linear", "dynamic_ntk"}:
+        raise ValueError("model.rope_scaling must be one of: none, linear, dynamic_ntk")
+    if cfg.model.block_size > 8192 and cfg.model.rope_original_context <= 0:
+        raise ValueError("Long-context configs must set model.rope_original_context")
+    if device != "cuda":
+        return
+    _free, total = torch.cuda.mem_get_info(torch.device(device))
+    estimated_gb = estimate_attention_scores_gb(cfg)
+    limit_gb = (total / 1024**3) * float(cfg.train.max_attention_memory_fraction)
+    if estimated_gb > limit_gb and not cfg.train.allow_unsafe_long_context:
+        raise RuntimeError(
+            "Refusing unsafe full-attention SFT config: "
+            f"block_size={cfg.data.block_size}, batch_size={cfg.train.batch_size}, "
+            f"estimated attention-score memory={estimated_gb:.1f}GB, limit={limit_gb:.1f}GB."
+        )
+
+
 def main() -> int:
     configure_console()
     args = parse_args()
     cfg = load_config(ROOT / args.config)
+    if args.context_length is not None:
+        cfg.model.block_size = args.context_length
+        cfg.data.block_size = args.context_length
+        if args.context_length > 8192 and cfg.model.rope_original_context <= 0:
+            cfg.model.rope_original_context = 768
+            cfg.model.rope_scaling = "linear"
+            cfg.model.rope_scaling_factor = args.context_length / 768
     random.seed(cfg.seed)
     torch.manual_seed(cfg.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(cfg.seed)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model, metadata = load_model(LoadOptions(checkpoint_path=ROOT / args.checkpoint, device=device, dtype="auto"))
+    validate_context_budget(cfg, device)
+    model, metadata = load_model(
+        LoadOptions(checkpoint_path=ROOT / args.checkpoint, device=device, dtype="auto", context_length=cfg.model.block_size)
+    )
+    model.set_gradient_checkpointing(bool(cfg.train.gradient_checkpointing))
     replaced: list[str] = []
     if args.lora:
         replaced = inject_lora(model, LoRAConfig(rank=args.lora_rank))
@@ -139,7 +179,21 @@ def main() -> int:
         )
         print(f"Saved LoRA adapter: {out_dir / 'adapter.pt'}")
     else:
-        torch.save({"format": "gai1_checkpoint_v1", "model_config": model.config_dict(), "model_state": model.state_dict()}, out_dir / "last.pt")
+        torch.save(
+            {
+                "format": "gai1_checkpoint_v1",
+                "model_config": model.config_dict(),
+                "model_state": model.state_dict(),
+                "metadata": {
+                    "trained_context_length": model.cfg.block_size,
+                    "tested_context_length": model.cfg.block_size,
+                    "rope_scaling": model.cfg.rope_scaling,
+                    "rope_original_context": model.cfg.rope_original_context,
+                    "long_context_validated": model.cfg.block_size >= 131072,
+                },
+            },
+            out_dir / "last.pt",
+        )
         print(f"Saved SFT checkpoint: {out_dir / 'last.pt'}")
     return 0
 

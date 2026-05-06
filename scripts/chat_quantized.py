@@ -30,6 +30,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=0.8)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--dtype", default="auto", choices=("auto", "fp32", "fp16", "bf16"))
+    parser.add_argument("--context-length", type=int, default=None)
+    parser.add_argument("--rope-scaling", default=None, choices=("none", "linear", "dynamic_ntk"))
     parser.add_argument("--config", default="configs/train_gpu.json")
     return parser.parse_args()
 
@@ -44,7 +46,15 @@ def load_chat_tokenizer(config_path: str):
 def main() -> int:
     configure_console()
     args = parse_args()
-    model, metadata = load_model(LoadOptions(checkpoint_path=ROOT / args.checkpoint, device=args.device, dtype=args.dtype))
+    model, metadata = load_model(
+        LoadOptions(
+            checkpoint_path=ROOT / args.checkpoint,
+            device=args.device,
+            dtype=args.dtype,
+            context_length=args.context_length,
+            rope_scaling=args.rope_scaling,
+        )
+    )
 
     tokenizer = load_chat_tokenizer(args.config)
     tokens = tokenizer.encode(format_chat_prompt(args.prompt), add_bos=True)

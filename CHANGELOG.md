@@ -13,3 +13,5 @@ Initial public scaffold:
 - Quantized checkpoint export.
 - Local API server scaffold.
 - Tests and open-source project metadata.
+- Experimental 128k context loading path with RoPE scaling, GQA config support,
+  TUI visible-context stats, and training memory guards.

@@ -1,0 +1,61 @@
+{
+  "status": "experimental_blueprint_not_locally_trainable_on_rtx3060",
+  "warning": "128k full-attention training requires a distributed long-context stack. This config documents the target and is guarded by scripts/train_pretrain.py.",
+  "run_name": "gai1_train_128k_experimental",
+  "seed": 1337,
+  "model": {
+    "vocab_size": 32000,
+    "block_size": 131072,
+    "n_layer": 12,
+    "n_head": 12,
+    "n_kv_head": 4,
+    "n_embd": 768,
+    "dropout": 0.05,
+    "rope_base": 10000.0,
+    "rope_scaling": "linear",
+    "rope_scaling_factor": 170.6666667,
+    "rope_original_context": 768,
+    "use_moe": true,
+    "n_experts": 4,
+    "n_experts_per_token": 2,
+    "moe_aux_loss_weight": 0.01
+  },
+  "tokenizer": {
+    "kind": "bpe",
+    "path": "data/tokenizer/gai1_tokenizer.json",
+    "vocab_size": 32000,
+    "min_frequency": 2,
+    "byte_fallback": true
+  },
+  "data": {
+    "train_path": "data/raw/fineweb2_ru_sample.jsonl",
+    "field": "text",
+    "block_size": 131072
+  },
+  "train": {
+    "batch_size": 1,
+    "gradient_accumulation_steps": 1,
+    "learning_rate": 0.00002,
+    "weight_decay": 0.1,
+    "max_steps": 100,
+    "grad_clip": 1.0,
+    "log_every": 1,
+    "save_every": 10,
+    "output_dir": "outputs/gai1_train_128k_experimental",
+    "resume": true,
+    "save_optimizer_state": false,
+    "checkpoint_dtype": "fp16",
+    "device": "cuda",
+    "precision": "fp16",
+    "num_workers": 0,
+    "pin_memory": true,
+    "persistent_workers": false,
+    "prefetch_factor": 2,
+    "allow_tf32": true,
+    "matmul_precision": "high",
+    "compile": false,
+    "gradient_checkpointing": true,
+    "allow_unsafe_long_context": false,
+    "max_attention_memory_fraction": 0.75
+  }
+}

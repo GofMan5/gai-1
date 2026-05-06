@@ -17,6 +17,14 @@
     "experts": "64-128",
     "routing": "top_2_or_top_4",
     "context_length_path": [8192, 32768, 131072],
+    "context_128k_release_gates": [
+      "trained_or_context_tuned_on_long_documents",
+      "needle_retrieval_eval_at_128k",
+      "long_qa_eval_at_128k",
+      "memory_benchmark",
+      "inference_latency_benchmark",
+      "distributed_sequence_parallel_training_path"
+    ],
     "tokenizer_vocab_target": "128k-200k"
   },
   "training": {
@@ -56,4 +64,3 @@
     "latency_and_cost"
   ]
 }
-

@@ -31,6 +31,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="auto")
     parser.add_argument("--dtype", default="auto", choices=("auto", "fp32", "fp16", "bf16"))
     parser.add_argument("--adapter", default=None)
+    parser.add_argument("--context-length", type=int, default=None)
+    parser.add_argument("--rope-scaling", default=None, choices=("none", "linear", "dynamic_ntk"))
     parser.add_argument("--config", default="configs/train_gpu.json")
     return parser.parse_args()
 
@@ -52,6 +54,8 @@ def main() -> int:
             device=args.device,
             dtype=args.dtype,
             adapter_path=adapter_path,
+            context_length=args.context_length,
+            rope_scaling=args.rope_scaling,
         )
     )
 

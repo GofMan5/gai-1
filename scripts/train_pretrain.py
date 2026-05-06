@@ -103,6 +103,37 @@ def cuda_memory_summary(device: torch.device) -> dict[str, float]:
     }
 
 
+def estimate_attention_scores_gb(cfg: Any, dtype_bytes: int = 2) -> float:
+    batch = int(cfg.train.batch_size)
+    seq = int(cfg.data.block_size)
+    heads = int(cfg.model.n_head)
+    layers = int(cfg.model.n_layer)
+    return batch * heads * seq * seq * dtype_bytes * layers / 1024**3
+
+
+def validate_context_budget(cfg: Any, device: torch.device) -> None:
+    if int(cfg.model.block_size) != int(cfg.data.block_size):
+        raise ValueError(f"model.block_size ({cfg.model.block_size}) must equal data.block_size ({cfg.data.block_size})")
+    if cfg.model.rope_scaling not in {"none", "linear", "dynamic_ntk"}:
+        raise ValueError("model.rope_scaling must be one of: none, linear, dynamic_ntk")
+    if cfg.model.block_size > 8192 and cfg.model.rope_original_context <= 0:
+        raise ValueError("Long-context configs must set model.rope_original_context")
+    if device.type != "cuda":
+        return
+    free, total = torch.cuda.mem_get_info(device)
+    estimated_gb = estimate_attention_scores_gb(cfg)
+    limit_gb = (total / 1024**3) * float(cfg.train.max_attention_memory_fraction)
+    if estimated_gb > limit_gb and not cfg.train.allow_unsafe_long_context:
+        raise RuntimeError(
+            "Refusing unsafe full-attention training config: "
+            f"block_size={cfg.data.block_size}, batch_size={cfg.train.batch_size}, "
+            f"estimated attention-score memory={estimated_gb:.1f}GB, limit={limit_gb:.1f}GB. "
+            "For 128k context, train in stages with shorter chunks/context-extension data or use a distributed "
+            "long-context stack with sequence parallelism. Set train.allow_unsafe_long_context=true only if you "
+            "know this machine can handle it."
+        )
+
+
 def load_training_tokenizer(cfg: Any):
     if cfg.tokenizer.kind == "byte":
         return ByteTokenizer()
@@ -151,6 +182,13 @@ def save_checkpoint(
         "model_state": checkpoint_state_dict(raw_model, cfg.train.checkpoint_dtype),
         "config_path": config_path,
         "checkpoint_dtype": cfg.train.checkpoint_dtype,
+        "metadata": {
+            "trained_context_length": cfg.model.block_size,
+            "tested_context_length": cfg.model.block_size,
+            "rope_scaling": cfg.model.rope_scaling,
+            "rope_original_context": cfg.model.rope_original_context,
+            "long_context_validated": cfg.model.block_size >= 131072,
+        },
     }
     if cfg.train.save_optimizer_state:
         payload["optimizer_state"] = optimizer.state_dict()
@@ -197,6 +235,7 @@ def main() -> int:
 
     device = resolve_device(cfg.train.device)
     configure_acceleration(cfg, device)
+    validate_context_budget(cfg, device)
     tokenizer = load_training_tokenizer(cfg)
     dataset = PackedTextDataset(
         path=ROOT / cfg.data.train_path,
@@ -206,6 +245,7 @@ def main() -> int:
     )
     loader = make_loader(dataset, cfg, device)
     raw_model = GAIModel(cfg.model).to(device)
+    raw_model.set_gradient_checkpointing(bool(cfg.train.gradient_checkpointing))
     model: torch.nn.Module = raw_model
     if cfg.train.compile and hasattr(torch, "compile"):
         model = torch.compile(model)

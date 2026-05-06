@@ -12,9 +12,13 @@ class ModelConfig:
     block_size: int = 256
     n_layer: int = 4
     n_head: int = 4
+    n_kv_head: int | None = None
     n_embd: int = 256
     dropout: float = 0.1
     rope_base: float = 10000.0
+    rope_scaling: str = "none"
+    rope_scaling_factor: float = 1.0
+    rope_original_context: int = 0
     use_moe: bool = False
     n_experts: int = 4
     n_experts_per_token: int = 2
@@ -60,6 +64,9 @@ class TrainConfig:
     allow_tf32: bool = True
     matmul_precision: str = "high"
     compile: bool = False
+    gradient_checkpointing: bool = False
+    allow_unsafe_long_context: bool = False
+    max_attention_memory_fraction: float = 0.75
 
 
 @dataclass

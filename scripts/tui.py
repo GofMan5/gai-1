@@ -33,6 +33,8 @@ class TurnStats:
     elapsed_s: float = 0.0
     tokens_per_s: float = 0.0
     total_context_tokens: int = 0
+    visible_context_tokens: int = 0
+    max_context_tokens: int = 0
     vram_allocated_gb: float = 0.0
     vram_reserved_gb: float = 0.0
 
@@ -49,6 +51,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default="configs/train_gpu.json")
     parser.add_argument("--checkpoint", default="outputs/gai1_train_gpu/last.pt")
     parser.add_argument("--adapter", default=None)
+    parser.add_argument("--context-length", type=int, default=None)
+    parser.add_argument("--rope-scaling", default=None, choices=("none", "linear", "dynamic_ntk"))
     parser.add_argument("--reasoning-profiles", default="configs/reasoning_modes.json")
     parser.add_argument("--level", default="medium")
     parser.add_argument("--device", default="auto")
@@ -95,7 +99,8 @@ def make_stats_panel(stats: TurnStats, metadata: dict[str, object], level: str) 
     table.add_row("adapter", "yes" if metadata.get("adapter_path") else "no")
     table.add_row("prompt tok", str(stats.prompt_tokens))
     table.add_row("gen tok", str(stats.generated_tokens))
-    table.add_row("ctx tok", str(stats.total_context_tokens))
+    table.add_row("visible ctx", f"{stats.visible_context_tokens}/{stats.max_context_tokens}")
+    table.add_row("total ctx", str(stats.total_context_tokens))
     table.add_row("latency", f"{stats.elapsed_s:.2f}s")
     table.add_row("tok/s", f"{stats.tokens_per_s:.2f}")
     table.add_row("VRAM alloc", f"{stats.vram_allocated_gb:.2f}GB")
@@ -170,7 +175,12 @@ def generate_with_live(
     device = next(model.parameters()).device
     input_ids = tokenizer.encode(prompt_text, add_bos=True)  # type: ignore[attr-defined]
     idx = torch.tensor([input_ids], dtype=torch.long, device=device)
-    stats = TurnStats(prompt_tokens=len(input_ids), total_context_tokens=len(input_ids))
+    stats = TurnStats(
+        prompt_tokens=len(input_ids),
+        total_context_tokens=len(input_ids),
+        visible_context_tokens=min(len(input_ids), model.cfg.block_size),  # type: ignore[attr-defined]
+        max_context_tokens=model.cfg.block_size,  # type: ignore[attr-defined]
+    )
     start = time.perf_counter()
     generated: list[int] = []
 
@@ -192,6 +202,8 @@ def generate_with_live(
             stats.elapsed_s = time.perf_counter() - start
             stats.tokens_per_s = stats.generated_tokens / max(stats.elapsed_s, 1e-6)
             stats.total_context_tokens = idx.size(1)
+            stats.visible_context_tokens = min(idx.size(1), model.cfg.block_size)  # type: ignore[attr-defined]
+            stats.max_context_tokens = model.cfg.block_size  # type: ignore[attr-defined]
             stats.vram_allocated_gb, stats.vram_reserved_gb = memory_stats(device)
             partial = tokenizer.decode(generated)  # type: ignore[attr-defined]
             live.update(render_screen(history, trace, stats, metadata, level, partial=partial))
@@ -228,7 +240,14 @@ def main() -> int:
     console = Console()
     adapter_path = ROOT / args.adapter if args.adapter else None
     model, metadata = load_model(
-        LoadOptions(checkpoint_path=ROOT / args.checkpoint, device=args.device, dtype=args.dtype, adapter_path=adapter_path)
+        LoadOptions(
+            checkpoint_path=ROOT / args.checkpoint,
+            device=args.device,
+            dtype=args.dtype,
+            adapter_path=adapter_path,
+            context_length=args.context_length,
+            rope_scaling=args.rope_scaling,
+        )
     )
     tokenizer = load_chat_tokenizer(args.config)
     profiles = load_reasoning_profiles(ROOT / args.reasoning_profiles)

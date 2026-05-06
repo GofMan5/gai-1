@@ -55,3 +55,23 @@ def test_load_lora_adapter(tmp_path) -> None:
     loaded, metadata = load_model(LoadOptions(checkpoint_path=checkpoint, adapter_path=adapter, device="cpu", dtype="fp32"))
     assert metadata["adapter_path"] == str(adapter)
     assert any("lora_" in name for name, _param in loaded.named_parameters())
+
+
+def test_load_checkpoint_with_extended_context(tmp_path) -> None:
+    cfg = ModelConfig(block_size=8, n_layer=1, n_head=2, n_embd=32, use_moe=False)
+    model = GAIModel(cfg)
+    checkpoint = tmp_path / "model.pt"
+    torch.save(
+        {
+            "format": "gai1_checkpoint_v1",
+            "step": 0,
+            "model_config": model.config_dict(),
+            "model_state": model.state_dict(),
+        },
+        checkpoint,
+    )
+    loaded, metadata = load_model(LoadOptions(checkpoint_path=checkpoint, context_length=32, device="cpu", dtype="fp32"))
+    assert loaded.cfg.block_size == 32
+    assert metadata["source_context_length"] == 8
+    assert metadata["context_length"] == 32
+    assert metadata["rope_scaling"] == "linear"

@@ -51,6 +51,7 @@ echo   run_tui.bat
 echo.
 echo With custom options:
 echo   run_tui.bat --level max --max-new-tokens 200
+echo   run_tui.bat --context-length 131072 --rope-scaling linear
 echo   run_tui.bat --adapter outputs\gai1_sft_lora\adapter.pt --level high
 echo   run_tui.bat --checkpoint outputs\quantized\last_int8.pt --level high
 echo.
