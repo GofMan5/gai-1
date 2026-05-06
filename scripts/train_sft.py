@@ -45,6 +45,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lora-rank", type=int, default=8)
     parser.add_argument("--resume-adapter", default=None)
     parser.add_argument("--context-length", type=int, default=None)
+    parser.add_argument("--sft-stride", type=int, default=None)
     return parser.parse_args()
 
 
@@ -92,6 +93,10 @@ def make_optimizer(parameters, cfg: Any, device: str) -> torch.optim.Optimizer:
         except (TypeError, ValueError):
             pass
     return torch.optim.AdamW(parameters, **kwargs)
+
+
+def should_drop_last(dataset_len: int, batch_size: int) -> bool:
+    return dataset_len >= batch_size
 
 
 def learning_rate_at_step(cfg: Any, step: int, max_steps: int | None = None) -> float:
@@ -255,8 +260,17 @@ def main() -> int:
         data_path,
         tokenizer=tokenizer,
         block_size=cfg.data.block_size,
+        stride=args.sft_stride,
     )
-    loader = DataLoader(dataset, batch_size=cfg.train.batch_size, shuffle=True, drop_last=True, pin_memory=device == "cuda", num_workers=cfg.train.num_workers)
+    drop_last = should_drop_last(len(dataset), int(cfg.train.batch_size))
+    loader = DataLoader(
+        dataset,
+        batch_size=cfg.train.batch_size,
+        shuffle=True,
+        drop_last=drop_last,
+        pin_memory=device == "cuda",
+        num_workers=cfg.train.num_workers,
+    )
     accumulation = max(1, cfg.train.gradient_accumulation_steps)
     dataset_records = jsonl_record_count(data_path)
     base_sha256 = file_sha256(checkpoint_path)
@@ -275,6 +289,11 @@ def main() -> int:
                 "data": str(data_path.relative_to(ROOT)) if data_path.is_relative_to(ROOT) else str(data_path),
                 "data_sha256": dataset_sha256,
                 "data_records": dataset_records,
+                "dataset_items": len(dataset),
+                "sft_stride": args.sft_stride,
+                "drop_last": drop_last,
+                "supervised_tokens": dataset.supervised_tokens,
+                "ignored_tokens": dataset.ignored_tokens,
                 "lora": args.lora,
                 "lora_rank": args.lora_rank,
                 "max_steps": args.max_steps,
@@ -420,6 +439,11 @@ def main() -> int:
         "data": str(data_path.relative_to(ROOT)) if data_path.is_relative_to(ROOT) else str(data_path),
         "data_sha256": dataset_sha256,
         "data_records": dataset_records,
+        "dataset_items": len(dataset),
+        "sft_stride": args.sft_stride,
+        "drop_last": drop_last,
+        "supervised_tokens": dataset.supervised_tokens,
+        "ignored_tokens": dataset.ignored_tokens,
         "context_length": cfg.model.block_size,
         "fused_optimizer": any(group.get("fused", False) for group in optimizer.param_groups),
         "lr_scheduler": cfg.train.lr_scheduler,

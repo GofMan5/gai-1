@@ -53,3 +53,8 @@ def test_set_optimizer_lr_updates_all_param_groups() -> None:
     train_pretrain.set_optimizer_lr(optimizer, 0.123)
 
     assert [group["lr"] for group in optimizer.param_groups] == [0.123, 0.123]
+
+
+def test_sft_drop_last_guard_keeps_small_dataset_trainable() -> None:
+    assert train_sft.should_drop_last(dataset_len=1, batch_size=2) is False
+    assert train_sft.should_drop_last(dataset_len=2, batch_size=2) is True

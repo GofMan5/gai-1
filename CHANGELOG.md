@@ -48,3 +48,7 @@ Initial public scaffold:
 - Inference hardening: transformer KV-cache decode path, shared suffix-only
   generation helper with stop tokens/strings and usage stats, cleaner chat CLI,
   and OpenAI-style local API responses with adapter/device/context load args.
+- SFT data quality hardening: all assistant turns in `messages` records now
+  receive loss, long records are split into supervised windows with optional
+  stride/overlap, SFT manifests log supervised/ignored token counts, and small
+  datasets no longer hang behind `drop_last=True`.

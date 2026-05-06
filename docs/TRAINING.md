@@ -48,6 +48,10 @@ Helper:
 ```
 
 SFT uses prompt masking: loss is applied to assistant tokens only, not to the user prompt. This is the correct path for turning the base model into a chat model.
+For multi-turn `messages` records, every assistant content span is trainable
+while user/system text and role headers are ignored. Long SFT records are split
+into supervised windows instead of being truncated; pass `--sft-stride` to
+`scripts/train_sft.py` to use overlapping windows.
 
 Output: `outputs/gai1_sft_lora/adapter.pt`.
 

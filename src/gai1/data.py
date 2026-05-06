@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 import torch
@@ -8,6 +9,12 @@ from torch.utils.data import Dataset, IterableDataset, get_worker_info
 
 USER_LABEL = "\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c"
 ASSISTANT_LABEL = "\u0410\u0441\u0441\u0438\u0441\u0442\u0435\u043d\u0442"
+
+
+@dataclass(frozen=True)
+class SupervisedTokens:
+    tokens: list[int]
+    train_mask: list[bool]
 
 
 def _read_jsonl(path: str | Path) -> list[dict[str, object]]:
@@ -95,31 +102,145 @@ def format_chat_prompt(prompt: str) -> str:
     return f"{USER_LABEL}: {prompt.strip()}\n{ASSISTANT_LABEL}:"
 
 
+def _append_segment(
+    tokens: list[int],
+    train_mask: list[bool],
+    tokenizer: object,
+    text: str,
+    train: bool,
+    add_bos: bool = False,
+    add_eos: bool = False,
+) -> None:
+    ids = tokenizer.encode(text, add_bos=add_bos, add_eos=add_eos)
+    tokens.extend(ids)
+    train_mask.extend([train] * len(ids))
+
+
+def _prompt_response_tokens(row: dict[str, object], tokenizer: object) -> SupervisedTokens | None:
+    pair = _prompt_response_from_record(row)
+    if pair is None:
+        return None
+    prompt, response = pair
+    if not response:
+        return None
+    prompt_text = format_chat_prompt(prompt) if prompt else ""
+    prompt_ids = tokenizer.encode(prompt_text, add_bos=True)
+    response_prefix = " " if prompt_text and not response.startswith(("\n", " ")) else ""
+    response_ids = tokenizer.encode(response_prefix + response, add_eos=True)
+    return SupervisedTokens(prompt_ids + response_ids, ([False] * len(prompt_ids)) + ([True] * len(response_ids)))
+
+
+def _messages_tokens(row: dict[str, object], tokenizer: object) -> SupervisedTokens | None:
+    raw_messages = row.get("messages")
+    if not isinstance(raw_messages, list):
+        return None
+    messages = [message for message in raw_messages if isinstance(message, dict)]
+    if not messages:
+        return None
+    tokens: list[int] = []
+    train_mask: list[bool] = []
+    _append_segment(tokens, train_mask, tokenizer, "", train=False, add_bos=True)
+    last_role = ""
+    for message in messages:
+        role = str(message.get("role", "user"))
+        content = str(message.get("content", "")).strip()
+        if not content:
+            continue
+        label = ASSISTANT_LABEL if role == "assistant" else USER_LABEL
+        separator = "\n" if len(tokens) > 1 else ""
+        if role == "assistant":
+            _append_segment(tokens, train_mask, tokenizer, f"{separator}{label}:", train=False)
+            content_prefix = " " if not content.startswith(("\n", " ")) else ""
+            _append_segment(tokens, train_mask, tokenizer, content_prefix + content, train=True)
+        else:
+            _append_segment(tokens, train_mask, tokenizer, f"{separator}{label}: {content}", train=False)
+        last_role = role
+    if len(tokens) < 2 or not any(train_mask):
+        return None
+    eos_id = int(getattr(tokenizer, "eos_id", 2))
+    tokens.append(eos_id)
+    train_mask.append(last_role == "assistant")
+    return SupervisedTokens(tokens, train_mask)
+
+
+def _chunk_supervised_tokens(
+    tokens: list[int],
+    train_mask: list[bool],
+    block_size: int,
+    pad_id: int,
+    stride: int | None = None,
+    min_supervised_tokens: int = 1,
+) -> list[tuple[torch.Tensor, torch.Tensor]]:
+    if len(tokens) != len(train_mask):
+        raise ValueError("tokens and train_mask length mismatch")
+    if len(tokens) < 2:
+        return []
+    if block_size < 2:
+        raise ValueError("block_size must be at least 2 for SFT")
+    step = block_size if stride is None else int(stride)
+    if step < 1 or step > block_size:
+        raise ValueError("stride must be between 1 and block_size")
+    items: list[tuple[torch.Tensor, torch.Tensor]] = []
+    max_start = max(0, len(tokens) - 2)
+    starts = list(range(0, max_start + 1, step))
+    tail_start = max(0, len(tokens) - block_size - 1)
+    if tail_start not in starts:
+        starts.append(tail_start)
+    starts = sorted(set(starts))
+    for start in starts:
+        chunk_tokens = tokens[start : start + block_size + 1]
+        chunk_mask = train_mask[start : start + block_size + 1]
+        if len(chunk_tokens) < 2:
+            continue
+        x_ids = chunk_tokens[:-1]
+        y_ids = chunk_tokens[1:]
+        y_mask = chunk_mask[1:]
+        labels = [target if should_train else -100 for target, should_train in zip(y_ids, y_mask)]
+        supervised = sum(1 for label in labels if label != -100)
+        if supervised < min_supervised_tokens:
+            continue
+        if len(x_ids) < block_size:
+            pad_count = block_size - len(x_ids)
+            x_ids.extend([pad_id] * pad_count)
+            labels.extend([-100] * pad_count)
+        items.append((torch.tensor(x_ids, dtype=torch.long), torch.tensor(labels, dtype=torch.long)))
+    return items
+
+
 class SFTDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
-    def __init__(self, path: str | Path, tokenizer: object, block_size: int) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        tokenizer: object,
+        block_size: int,
+        stride: int | None = None,
+        min_supervised_tokens: int = 1,
+    ) -> None:
         self.block_size = block_size
+        self.stride = stride
+        self.min_supervised_tokens = min_supervised_tokens
         self.pad_id = int(getattr(tokenizer, "pad_id", 0))
         self.items: list[tuple[torch.Tensor, torch.Tensor]] = []
+        self.records = 0
+        self.supervised_tokens = 0
+        self.ignored_tokens = 0
         for row in _read_jsonl(path):
-            prompt, response = _prompt_response_from_record(row)
-            if not response:
+            self.records += 1
+            encoded = _messages_tokens(row, tokenizer) if "messages" in row else _prompt_response_tokens(row, tokenizer)
+            if encoded is None:
                 continue
-            prompt_text = format_chat_prompt(prompt) if prompt else ""
-            prompt_ids = tokenizer.encode(prompt_text, add_bos=True)
-            response_prefix = " " if prompt_text and not response.startswith(("\n", " ")) else ""
-            full_ids = prompt_ids + tokenizer.encode(response_prefix + response, add_eos=True)
-            if len(full_ids) < 2:
-                continue
-            full_ids = full_ids[: block_size + 1]
-            x_ids = full_ids[:-1]
-            y_ids = full_ids[1:]
-            ignore_count = min(max(0, len(prompt_ids) - 1), len(y_ids))
-            labels = [-100] * ignore_count + y_ids[ignore_count:]
-            if len(x_ids) < block_size:
-                pad_count = block_size - len(x_ids)
-                x_ids.extend([self.pad_id] * pad_count)
-                labels.extend([-100] * pad_count)
-            self.items.append((torch.tensor(x_ids, dtype=torch.long), torch.tensor(labels, dtype=torch.long)))
+            chunks = _chunk_supervised_tokens(
+                encoded.tokens,
+                encoded.train_mask,
+                block_size,
+                self.pad_id,
+                stride=stride,
+                min_supervised_tokens=min_supervised_tokens,
+            )
+            for _x, labels in chunks:
+                self.supervised_tokens += int((labels != -100).sum().item())
+                self.ignored_tokens += int((labels == -100).sum().item())
+            self.items.extend(chunks)
         if not self.items:
             raise ValueError(f"No usable SFT records found in {path}")
 
