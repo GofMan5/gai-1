@@ -20,12 +20,19 @@ Use this checklist before tagging or publishing a GitHub release.
   - dataset summary and licenses;
   - eval results;
   - SHA256 hashes.
+- Quantized checkpoints include tokenizer metadata, generation config,
+  checkpoint metadata, relative source path, and a source SHA256.
+- INT4 release exports keep MoE router/gate tensors in fp16 unless there is an
+  eval proving otherwise.
+- Tied `token_embedding.weight` / `lm_head.weight` is stored once.
 
 ## Data And Safety
 
 - Dataset licenses are reviewed in `docs/DATASETS.md`.
 - Safety limitations are documented in `DISCLAIMER.md` and `MODEL_CARD.md`.
 - Eval gates are run on release checkpoints.
+- FP checkpoint and quantized checkpoint are compared with
+  `scripts/compare_quantized.py`.
 - Known failure modes are listed in release notes.
 - Long-context claims include explicit trained/tested context lengths and eval
   results. Do not call a checkpoint 128k-ready based only on RoPE scaling.

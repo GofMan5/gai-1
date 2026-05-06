@@ -63,7 +63,7 @@ def load_model(options: LoadOptions) -> tuple[GAIModel, dict[str, Any]]:
         cfg = make_model_config(checkpoint["model_config"])
         state = checkpoint["model_state"]
         quantization = "none"
-    elif fmt == "gai1_quantized_checkpoint_v1":
+    elif fmt in {"gai1_quantized_checkpoint_v1", "gai1_quantized_checkpoint_v2"}:
         cfg = make_model_config(checkpoint["model_config"])
         state = dequantize_state_dict(checkpoint["model_state_quantized"], dtype=dtype)
         quantization = f"int{checkpoint.get('bits')}"
@@ -121,4 +121,7 @@ def load_model(options: LoadOptions) -> tuple[GAIModel, dict[str, Any]]:
         "rope_scaling": cfg.rope_scaling,
         "rope_scaling_factor": cfg.rope_scaling_factor,
         "rope_original_context": cfg.rope_original_context,
+        "tokenizer": checkpoint.get("tokenizer"),
+        "generation_config": checkpoint_metadata.get("generation_config") if isinstance(checkpoint_metadata, dict) else None,
+        "quantization_policy": checkpoint_metadata.get("quantization_policy") if isinstance(checkpoint_metadata, dict) else None,
     }

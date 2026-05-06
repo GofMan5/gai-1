@@ -147,6 +147,15 @@ extends the load-time context window with RoPE scaling. See
 .\.venv\Scripts\python.exe .\scripts\export_quantized.py --checkpoint .\outputs\gai1_train_gpu\last.pt --bits 4
 ```
 
+INT4 export keeps MoE router/gate tensors in fp16 by default and stores tied
+`lm_head.weight` as an alias of `token_embedding.weight`.
+
+Compare FP16 vs quantized generations:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\compare_quantized.py --quantized-checkpoint .\outputs\quantized\last_int4.pt
+```
+
 ## Tests
 
 ```powershell

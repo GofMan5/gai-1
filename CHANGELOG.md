@@ -17,3 +17,6 @@ Initial public scaffold:
   TUI visible-context stats, and training memory guards.
 - Incremental `train_100.bat` / `scripts/train_cycle.py` workflow for 100-step
   progress checks with fixed prompts.
+- Quantized checkpoint v2 export with tied-weight aliases, tokenizer artifact
+  metadata, relative source paths, source SHA256, generation config, and fp16
+  MoE router/gate weights for INT4.

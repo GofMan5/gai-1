@@ -55,3 +55,6 @@ production release. A serious release needs held-out evaluations for:
 chain-of-thought.
 - Quantized exports are storage-oriented and not a replacement for optimized
 inference engines such as vLLM or TensorRT-LLM.
+- Quantized checkpoint releases should include tokenizer metadata, generation
+  defaults, source checkpoint hash, train/eval metadata, and FP-vs-quantized
+  comparison reports.

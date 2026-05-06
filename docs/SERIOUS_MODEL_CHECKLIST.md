@@ -10,6 +10,7 @@ Before long training:
 - `scripts/train_sft.py --lora --max-steps 1` saves an adapter.
 - `scripts/tui.py --adapter ...` loads without errors.
 - `scripts/export_quantized.py --bits 8` creates a release checkpoint.
+- `scripts/compare_quantized.py --quantized-checkpoint ...` compares FP vs quantized outputs.
 - `scripts/eval_gates.py` passes on the target checkpoint before release.
 
 Still quality work, not framework work:

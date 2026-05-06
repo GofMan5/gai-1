@@ -12,6 +12,7 @@ class QuantizationStats:
     quantized_bytes: int
     quantized_tensors: int
     kept_tensors: int
+    aliased_tensors: int = 0
 
     @property
     def compression_ratio(self) -> float:
@@ -24,13 +25,26 @@ def tensor_nbytes(tensor: torch.Tensor) -> int:
     return tensor.numel() * tensor.element_size()
 
 
-def should_quantize_tensor(name: str, tensor: torch.Tensor, keep_norm_fp16: bool = True) -> bool:
+def is_router_tensor(name: str) -> bool:
+    lowered = name.casefold()
+    return ".gate.weight" in lowered or "router" in lowered
+
+
+def should_quantize_tensor(
+    name: str,
+    tensor: torch.Tensor,
+    keep_norm_fp16: bool = True,
+    bits: int = 8,
+    keep_router_fp16: bool = False,
+) -> bool:
     if not tensor.is_floating_point():
         return False
     if tensor.ndim < 2:
         return False
     lowered = name.casefold()
     if keep_norm_fp16 and ("norm" in lowered or "bias" in lowered):
+        return False
+    if keep_router_fp16 and bits == 4 and is_router_tensor(name):
         return False
     return True
 
@@ -96,15 +110,31 @@ def quantize_state_dict(
     state_dict: dict[str, torch.Tensor],
     bits: int,
     keep_norm_fp16: bool = True,
+    keep_router_fp16: bool = True,
+    tie_lm_head: bool = True,
 ) -> tuple[dict[str, Any], QuantizationStats]:
     records: dict[str, Any] = {}
     original_bytes = 0
     quantized_bytes = 0
     quantized_tensors = 0
     kept_tensors = 0
+    aliased_tensors = 0
+    token_embedding = state_dict.get("token_embedding.weight")
     for name, tensor in state_dict.items():
         original_bytes += tensor_nbytes(tensor)
-        if should_quantize_tensor(name, tensor, keep_norm_fp16=keep_norm_fp16):
+        can_alias_lm_head = (
+            tie_lm_head
+            and name == "lm_head.weight"
+            and "token_embedding.weight" in records
+            and token_embedding is not None
+            and tuple(tensor.shape) == tuple(token_embedding.shape)
+            and torch.equal(tensor.detach().cpu(), token_embedding.detach().cpu())
+        )
+        if can_alias_lm_head:
+            records[name] = {"alias": "token_embedding.weight"}
+            aliased_tensors += 1
+            continue
+        if should_quantize_tensor(name, tensor, keep_norm_fp16=keep_norm_fp16, bits=bits, keep_router_fp16=keep_router_fp16):
             record = quantize_tensor_symmetric(tensor, bits=bits)
             records[name] = record
             quantized_bytes += tensor_nbytes(record["payload"]) + tensor_nbytes(record["scale"])
@@ -121,16 +151,18 @@ def quantize_state_dict(
         quantized_bytes=quantized_bytes,
         quantized_tensors=quantized_tensors,
         kept_tensors=kept_tensors,
+        aliased_tensors=aliased_tensors,
     )
 
 
 def dequantize_state_dict(records: dict[str, Any], dtype: torch.dtype = torch.float16) -> dict[str, torch.Tensor]:
     state: dict[str, torch.Tensor] = {}
     for name, record in records.items():
-        if record.get("quantized"):
+        if "alias" in record:
+            state[name] = state[record["alias"]]
+        elif record.get("quantized"):
             state[name] = dequantize_tensor_symmetric(record, dtype=dtype)
         else:
             payload = record["payload"]
             state[name] = payload.to(dtype) if payload.is_floating_point() else payload
     return state
-
