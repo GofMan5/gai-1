@@ -68,6 +68,15 @@ Make it follow chat instructions with LoRA SFT:
 .\train_chat_lora.bat 500
 ```
 
+For gradual quality checks, run 100-step cycles:
+
+```powershell
+.\train_100.bat sft 100
+```
+
+This resumes the existing LoRA adapter when present and writes fixed-prompt
+progress reports to `reports\progress_*.jsonl`.
+
 Run the TUI:
 
 ```powershell

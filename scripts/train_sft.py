@@ -38,6 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-steps", type=int, default=500)
     parser.add_argument("--lora", action="store_true")
     parser.add_argument("--lora-rank", type=int, default=8)
+    parser.add_argument("--resume-adapter", default=None)
     parser.add_argument("--context-length", type=int, default=None)
     return parser.parse_args()
 
@@ -100,13 +101,24 @@ def main() -> int:
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     validate_context_budget(cfg, device)
+    resume_adapter = ROOT / args.resume_adapter if args.resume_adapter else None
+    if resume_adapter is not None and not resume_adapter.exists():
+        resume_adapter = None
     model, metadata = load_model(
-        LoadOptions(checkpoint_path=ROOT / args.checkpoint, device=device, dtype="auto", context_length=cfg.model.block_size)
+        LoadOptions(
+            checkpoint_path=ROOT / args.checkpoint,
+            device=device,
+            dtype="auto",
+            context_length=cfg.model.block_size,
+            adapter_path=resume_adapter,
+        )
     )
     model.set_gradient_checkpointing(bool(cfg.train.gradient_checkpointing))
     replaced: list[str] = []
-    if args.lora:
+    if args.lora and resume_adapter is None:
         replaced = inject_lora(model, LoRAConfig(rank=args.lora_rank))
+    elif args.lora:
+        replaced = [f"resumed:{resume_adapter}"]
     model.train()
     optimizer = torch.optim.AdamW((p for p in model.parameters() if p.requires_grad), lr=cfg.train.learning_rate, weight_decay=cfg.train.weight_decay)
     scaler = torch.amp.GradScaler("cuda", enabled=device == "cuda")
@@ -129,6 +141,7 @@ def main() -> int:
                 "base_metadata": metadata,
                 "lora": args.lora,
                 "lora_rank": args.lora_rank,
+                "resume_adapter": str(resume_adapter) if resume_adapter is not None else None,
                 "lora_targets": replaced,
                 "trainable_params": trainable_parameter_count(model),
             },

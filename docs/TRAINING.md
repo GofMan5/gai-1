@@ -40,6 +40,34 @@ Output: `outputs/gai1_sft_lora/adapter.pt`.
 
 `run_tui.bat` loads `outputs/gai1_sft_lora/adapter.pt` automatically when it exists.
 
+## Incremental 100-Step Cycles
+
+Language-model training is controlled by optimizer steps, not classic epochs.
+With the current sliding-token dataset, a real epoch is not a useful unit for
+quick experiments.
+
+Use this for gradual chat tuning:
+
+```powershell
+.\train_100.bat sft 100
+```
+
+It does three things:
+
+- resumes `outputs/gai1_sft_lora/adapter.pt` if it exists;
+- trains 100 more LoRA SFT optimizer steps;
+- runs fixed prompts from `evals/progress_prompts_ru.txt` and writes a report to
+  `reports/progress_*.jsonl`.
+
+Use this for gradual base-model pretraining:
+
+```powershell
+.\train_100.bat pretrain 100
+```
+
+For pretraining, the helper reads the current `outputs/gai1_train_gpu/last.pt`
+step and launches `train_pretrain.py` with the next target step.
+
 ## RTX 3060 Profile
 
 - CUDA with fp16 AMP.

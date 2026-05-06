@@ -15,3 +15,5 @@ Initial public scaffold:
 - Tests and open-source project metadata.
 - Experimental 128k context loading path with RoPE scaling, GQA config support,
   TUI visible-context stats, and training memory guards.
+- Incremental `train_100.bat` / `scripts/train_cycle.py` workflow for 100-step
+  progress checks with fixed prompts.
