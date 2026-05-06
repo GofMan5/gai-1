@@ -31,14 +31,14 @@ Show the full reasoning controller view at startup:
 .\.venv\Scripts\python.exe .\scripts\tui.py --reasoning-view full
 ```
 
-Experimental 128k context launch:
+Experimental 256k context launch:
 
 ```powershell
-.\run_tui.bat --context-length 131072 --rope-scaling linear
+.\run_tui.bat --context-length 262144 --rope-scaling linear
 ```
 
 The TUI reports `visible ctx` separately from total accumulated tokens. The
-current local checkpoint was trained at a shorter context, so 128k is an
+current local checkpoint was trained at a shorter context, so 256k is an
 experimental load-time window until long-context tuning and evals are done.
 
 Commands inside TUI:

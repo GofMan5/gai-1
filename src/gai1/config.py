@@ -6,6 +6,23 @@ from pathlib import Path
 from typing import Any
 
 
+GAI1_TARGET_CONTEXT_LENGTH = 262_144
+GAI1_CONTEXT_EXTENSION_STAGES = (8_192, 32_768, GAI1_TARGET_CONTEXT_LENGTH)
+
+
+def resolve_context_length(value: int | None) -> int:
+    return GAI1_TARGET_CONTEXT_LENGTH if value is None else validate_context_length(value)
+
+
+def validate_context_length(value: int) -> int:
+    context_length = int(value)
+    if context_length < 1:
+        raise ValueError("context_length must be positive")
+    if context_length > GAI1_TARGET_CONTEXT_LENGTH:
+        raise ValueError(f"context_length must not exceed permanent GAI-1 target {GAI1_TARGET_CONTEXT_LENGTH}")
+    return context_length
+
+
 @dataclass
 class ModelConfig:
     vocab_size: int = 32000

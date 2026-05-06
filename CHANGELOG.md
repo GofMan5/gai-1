@@ -13,7 +13,7 @@ Initial public scaffold:
 - Quantized checkpoint export.
 - Local API server scaffold.
 - Tests and open-source project metadata.
-- Experimental 128k context loading path with RoPE scaling, GQA config support,
+- Permanent experimental 256k context loading path with RoPE scaling, GQA config support,
   TUI visible-context stats, and training memory guards.
 - Incremental `train_100.bat` / `scripts/train_cycle.py` workflow for 100-step
   progress checks with fixed prompts.
@@ -63,3 +63,6 @@ Initial public scaffold:
   policy, and validates quantized records/aliases before model load.
 - Runtime text integrity hardening: TUI separators are ASCII-stable and tests
   now fail on common mojibake markers in source/config/eval text.
+- Context target hardening: project target is fixed at 262144 tokens, runtime
+  load defaults resolve to that target, oversized context requests are rejected,
+  and long-context validation metadata no longer overclaims without eval proof.

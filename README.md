@@ -19,7 +19,7 @@ This repository ships code, configs, tests, and docs. It does not ship productio
 - Rich TUI with streaming output, token stats, VRAM stats, and reasoning trace.
 - Quantized checkpoint export.
 - OpenAI-style local chat API scaffold.
-- Experimental 128k context target with RoPE scaling and memory guards.
+- Permanent experimental 256k context target with RoPE scaling and memory guards.
 
 ## Install
 
@@ -164,14 +164,14 @@ Manual launch:
 .\.venv\Scripts\python.exe .\scripts\tui.py --checkpoint .\outputs\gai1_train_gpu\last.pt --adapter .\outputs\gai1_sft_lora\adapter.pt --level high
 ```
 
-Experimental 128k context launch:
+Runtime defaults to the permanent 256k target. You can pass it explicitly:
 
 ```powershell
-.\run_tui.bat --context-length 131072 --rope-scaling linear
+.\run_tui.bat --context-length 262144 --rope-scaling linear
 ```
 
-The current local checkpoint is not trained/evaluated at 128k. This flag only
-extends the load-time context window with RoPE scaling. See
+The current local checkpoint is not trained/evaluated at 256k. This only sets
+the load-time context window with RoPE scaling. See
 [Long context](docs/LONG_CONTEXT.md).
 
 ## Local API

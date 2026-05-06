@@ -49,8 +49,8 @@ production release. A serious release needs held-out evaluations for:
 
 - Quality depends on data volume, data quality, and training time.
 - Short smoke runs will produce incoherent generations.
-- 128k context is an experimental target. A checkpoint must be tuned and
-  evaluated at 128k before being described as 128k-ready.
+- 256k context is the permanent experimental target. A checkpoint must be tuned
+  and evaluated at 256k before being described as 256k-ready.
 - The reasoning trace shown in TUI is a runtime scaffold, not hidden model
 chain-of-thought.
 - Quantized exports are storage-oriented and not a replacement for optimized

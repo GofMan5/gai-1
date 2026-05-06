@@ -35,7 +35,7 @@ Use this checklist before tagging or publishing a GitHub release.
   `scripts/compare_quantized.py`.
 - Known failure modes are listed in release notes.
 - Long-context claims include explicit trained/tested context lengths and eval
-  results. Do not call a checkpoint 128k-ready based only on RoPE scaling.
+  results. Do not call a checkpoint 256k-ready based only on RoPE scaling.
 
 ## GitHub
 

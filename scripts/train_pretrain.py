@@ -19,7 +19,7 @@ from tqdm import tqdm
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from gai1.config import load_config, save_json
+from gai1.config import GAI1_TARGET_CONTEXT_LENGTH, load_config, save_json
 from gai1.data import PackedTextDataset, StreamingPackedTextDataset
 from gai1.model import GAIModel, format_param_count
 from gai1.tokenizer import BPETokenizer, ByteTokenizer
@@ -204,7 +204,7 @@ def validate_context_budget(cfg: Any, device: torch.device) -> None:
             "Refusing unsafe full-attention training config: "
             f"block_size={cfg.data.block_size}, batch_size={cfg.train.batch_size}, "
             f"estimated attention-score memory={estimated_gb:.1f}GB, limit={limit_gb:.1f}GB. "
-            "For 128k context, train in stages with shorter chunks/context-extension data or use a distributed "
+            "For 256k context, train in stages with shorter chunks/context-extension data or use a distributed "
             "long-context stack with sequence parallelism. Set train.allow_unsafe_long_context=true only if you "
             "know this machine can handle it."
         )
@@ -296,7 +296,9 @@ def save_checkpoint(
             "tested_context_length": cfg.model.block_size,
             "rope_scaling": cfg.model.rope_scaling,
             "rope_original_context": cfg.model.rope_original_context,
-            "long_context_validated": cfg.model.block_size >= 131072,
+            "configured_context_length": cfg.model.block_size,
+            "long_context_validated": False,
+            "target_context_length": GAI1_TARGET_CONTEXT_LENGTH,
         },
     }
     if cfg.train.save_optimizer_state:

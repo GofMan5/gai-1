@@ -20,7 +20,7 @@ from tqdm import tqdm
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from gai1.config import load_config
+from gai1.config import GAI1_TARGET_CONTEXT_LENGTH, load_config
 from gai1.data import SFTDataset
 from gai1.loading import LoadOptions, load_model
 from gai1.lora import LoRAConfig, inject_lora, lora_state_dict, trainable_parameter_count
@@ -202,7 +202,8 @@ def validate_context_budget(cfg: Any, device: str) -> None:
         raise RuntimeError(
             "Refusing unsafe full-attention SFT config: "
             f"block_size={cfg.data.block_size}, batch_size={cfg.train.batch_size}, "
-            f"estimated attention-score memory={estimated_gb:.1f}GB, limit={limit_gb:.1f}GB."
+            f"estimated attention-score memory={estimated_gb:.1f}GB, limit={limit_gb:.1f}GB. "
+            "For 256k context, use staged context extension or a distributed long-context stack."
         )
 
 
@@ -520,7 +521,9 @@ def main() -> int:
                     "tested_context_length": model.cfg.block_size,
                     "rope_scaling": model.cfg.rope_scaling,
                     "rope_original_context": model.cfg.rope_original_context,
-                    "long_context_validated": model.cfg.block_size >= 131072,
+                    "configured_context_length": model.cfg.block_size,
+                    "long_context_validated": False,
+                    "target_context_length": GAI1_TARGET_CONTEXT_LENGTH,
                 },
             },
             out_dir / "last.pt",

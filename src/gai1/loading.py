@@ -6,7 +6,7 @@ from typing import Any
 
 import torch
 
-from gai1.config import ModelConfig
+from gai1.config import ModelConfig, resolve_context_length
 from gai1.lora import LoRAConfig, inject_lora
 from gai1.model import GAIModel
 from gai1.quantization import dequantize_state_dict, validate_quantized_records
@@ -117,14 +117,12 @@ def load_model(options: LoadOptions) -> tuple[GAIModel, dict[str, Any]]:
         raise ValueError(f"Unsupported checkpoint format: {fmt}")
 
     source_block_size = cfg.block_size
-    if options.context_length is not None:
-        if options.context_length < 1:
-            raise ValueError("context_length must be positive")
-        cfg.block_size = int(options.context_length)
-        cfg.rope_original_context = options.rope_original_context or source_block_size
-        if cfg.block_size > source_block_size and options.rope_scaling is None and cfg.rope_scaling == "none":
-            cfg.rope_scaling = "linear"
-            cfg.rope_scaling_factor = cfg.block_size / max(1, source_block_size)
+    target_context_length = resolve_context_length(options.context_length)
+    cfg.block_size = target_context_length
+    cfg.rope_original_context = options.rope_original_context or source_block_size
+    if cfg.block_size > source_block_size and options.rope_scaling is None and cfg.rope_scaling == "none":
+        cfg.rope_scaling = "linear"
+        cfg.rope_scaling_factor = cfg.block_size / max(1, source_block_size)
     if options.rope_scaling is not None:
         cfg.rope_scaling = options.rope_scaling
     if options.rope_scaling_factor is not None:

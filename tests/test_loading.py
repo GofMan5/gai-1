@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from gai1.config import ModelConfig
+from gai1.config import GAI1_TARGET_CONTEXT_LENGTH, ModelConfig
 from gai1.loading import LoadOptions, load_model
 from gai1.lora import LoRAConfig, inject_lora, lora_state_dict
 from gai1.model import GAIModel
@@ -77,6 +77,46 @@ def test_load_checkpoint_with_extended_context(tmp_path) -> None:
     assert metadata["source_context_length"] == 8
     assert metadata["context_length"] == 32
     assert metadata["rope_scaling"] == "linear"
+
+
+def test_load_checkpoint_defaults_to_project_target_context(tmp_path) -> None:
+    cfg = ModelConfig(block_size=8, n_layer=1, n_head=2, n_embd=32, use_moe=False)
+    model = GAIModel(cfg)
+    checkpoint = tmp_path / "model.pt"
+    torch.save(
+        {
+            "format": "gai1_checkpoint_v1",
+            "step": 0,
+            "model_config": model.config_dict(),
+            "model_state": model.state_dict(),
+        },
+        checkpoint,
+    )
+
+    loaded, metadata = load_model(LoadOptions(checkpoint_path=checkpoint, device="cpu", dtype="fp32"))
+
+    assert loaded.cfg.block_size == GAI1_TARGET_CONTEXT_LENGTH
+    assert metadata["context_length"] == GAI1_TARGET_CONTEXT_LENGTH
+    assert metadata["source_context_length"] == 8
+    assert metadata["rope_scaling"] == "linear"
+
+
+def test_load_checkpoint_rejects_context_above_project_target(tmp_path) -> None:
+    cfg = ModelConfig(block_size=8, n_layer=1, n_head=2, n_embd=32, use_moe=False)
+    model = GAIModel(cfg)
+    checkpoint = tmp_path / "model.pt"
+    torch.save(
+        {
+            "format": "gai1_checkpoint_v1",
+            "step": 0,
+            "model_config": model.config_dict(),
+            "model_state": model.state_dict(),
+        },
+        checkpoint,
+    )
+
+    with pytest.raises(ValueError, match="must not exceed"):
+        load_model(LoadOptions(checkpoint_path=checkpoint, context_length=GAI1_TARGET_CONTEXT_LENGTH + 1, device="cpu", dtype="fp32"))
 
 
 def test_load_checkpoint_exposes_tokenizer_metadata(tmp_path) -> None:

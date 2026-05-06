@@ -26,12 +26,12 @@ GAI-1 is a model factory scaffold, not a single script.
 
 ## Long Context
 
-The target path includes 8k, 32k, and 128k context stages. Current code can
+The target path includes 8k, 32k, and 256k context stages. Current code can
 load a checkpoint with a larger context window using RoPE scaling, but a
-checkpoint is not considered 128k-ready until it has been context-tuned and
+checkpoint is not considered 256k-ready until it has been context-tuned and
 evaluated at that length.
 
-Full-attention 128k training is not realistic on RTX 3060 12GB. See
+Full-attention 256k training is not realistic on RTX 3060 12GB. See
 `docs/LONG_CONTEXT.md`.
 
 ## RTX 3060 12GB Training
